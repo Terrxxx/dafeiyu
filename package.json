@@ -1,0 +1,15 @@
+{
+  "name": "dafeiyu-social-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/main.js",
+    "doctor": "node --env-file-if-exists=.env src/main.js doctor",
+    "login:bili": "node --env-file-if-exists=.env src/login.js",
+    "test": "node --test test/*.test.js",
+    "once": "node --env-file-if-exists=.env src/main.js once"
+  },
+  "dependencies": { "qrcode": "1.5.4" }
+}

@@ -1,0 +1,34 @@
+{
+  "qq": {
+    "enabled": true,
+    "allowUsers": [],
+    "allowGroups": [],
+    "requireMentionInGroup": false,
+    "cooldownSeconds": 15,
+    "mergeSeconds": 8,
+    "maxWaitSeconds": 25
+  },
+  "bilibili": {
+    "enabled": true,
+    "allowMentionUsers": [
+      "*"
+    ],
+    "pollSeconds": 90,
+    "browseMinutes": 180,
+    "maxVideosPerRound": 3
+  },
+  "agent": {
+    "maxToolRounds": 6,
+    "maxOutputTokens": 1200,
+    "historyMessages": 16,
+    "maxModelCallsPerHour": 60,
+    "maxOutgoingPerHour": 20,
+    "maxBiliCommentsPerHour": 3
+  },
+  "social": {
+    "enabled": true,
+    "intervalMinutes": 60,
+    "qzoneEnabled": true,
+    "qzoneVisibility": 4
+  }
+}
