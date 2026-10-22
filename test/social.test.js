@@ -22,6 +22,10 @@ test('image-only messages reach the handler; untrusted image URLs and oversized 
   assert.throws(() => imageUrl('file:///C:/secret'));
   assert.throws(() => imageUrl('https://127.0.0.1/a'));
   assert.throws(() => imageUrl('https://qpic.cn.evil.example/a'));
+  assert.equal(imageUrl('https://multimedia.nt.qq.com.cn/download?fileid=test').hostname, 'multimedia.nt.qq.com.cn');
+  assert.throws(() => imageUrl('https://multimedia.nt.qq.com.cn.evil.example/a'));
+  assert.throws(() => imageUrl('https://unverified.qq.com.cn/a'));
+  assert.throws(() => imageUrl('https://user:secret@multimedia.nt.qq.com.cn/a'));
   const response = (chunks, type = 'image/png') => async () => ({ ok: true, headers: new Headers({ 'content-type': type }), body: (async function* () { yield* chunks; })() });
   assert.equal(await downloadImage('https://gchat.qpic.cn/a', response([Buffer.from('abc')])), 'data:image/png;base64,YWJj');
   await assert.rejects(downloadImage('https://gchat.qpic.cn/a', response([Buffer.alloc(8 * 1024 * 1024 + 1)])));

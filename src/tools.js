@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { allowed } from './config.js';
+import { messageParts } from './message-parts.js';
 
 const schema = (name, description, properties = {}, required = []) => ({ type: 'function', function: { name, description, parameters: { type: 'object', properties, required, additionalProperties: false } } });
 const str = description => ({ type: 'string', description });
@@ -27,9 +28,9 @@ export class SocialTools {
     this.videos.clear(); this.targets.clear();
     if (current) this.targets.add(`${current.kind}:${current.target}`);
   }
-  outgoing(bili = false) {
+  outgoing(bili = false, text = null) {
     if (bili) this.store.reserve('bili-comments', this.config.agent.maxBiliCommentsPerHour);
-    this.store.reserve('outgoing', this.config.agent.maxOutgoingPerHour);
+    this.store.reserve('outgoing', this.config.agent.maxOutgoingPerHour, text === null ? 1 : messageParts(text).length);
   }
   async call(name, args) {
     if (name === 'qzone_publish') {
@@ -60,7 +61,7 @@ export class SocialTools {
       this.currentAttempted = true;
       const msg = this.current;
       return this.store.once(msg.key, async () => {
-        this.outgoing();
+        this.outgoing(false, args.text);
         return this.qq.send(msg.kind, msg.target, args.text, {
           atUserIds: args.mentionSender && msg.kind === 'group' ? [msg.sender] : [],
           ...(args.quote ? { replyTo: msg.id } : {}),
@@ -107,7 +108,7 @@ export class SocialTools {
       const videos = [...new Set(args.text.match(/BV[0-9A-Za-z]{10}/g) || [])].sort();
       const hash = createHash('sha256').update(videos.length ? videos.join(',') : args.text.trim()).digest('hex').slice(0, 20);
       return this.store.once(`qq-share:${args.kind}:${args.target}:${hash}`, async () => {
-        this.outgoing();
+        this.outgoing(false, args.text);
         return this.qq.send(args.kind, args.target, args.text, { atUserIds });
       });
     }

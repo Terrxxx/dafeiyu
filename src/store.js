@@ -15,11 +15,20 @@ export class Store {
   audit(type, detail) {
     fs.appendFileSync(this.auditFile, JSON.stringify({ time: new Date().toISOString(), type, ...detail }) + '\n');
   }
-  reserve(kind, limit) {
+  reserve(kind, limit, count = 1) {
+    // Zero disables only the model budget; message and action limits still apply.
+    if (kind === 'model' && limit === 0) return;
     const now = Date.now();
     this.data.counters = this.data.counters.filter(x => now - x.time < 3600000);
-    if (this.data.counters.filter(x => x.kind === kind).length >= limit) throw new Error(`${kind} 每小时额度已用完`);
-    this.data.counters.push({ kind, time: now });
+    const used = this.data.counters.filter(x => x.kind === kind);
+    if (used.length + count > limit) {
+      if (count > limit) throw new Error(`${kind} 本次需要 ${count} 个名额，超过每小时上限 ${limit}`);
+      const release = used.map(x => x.time).sort((a, b) => a - b)[used.length + count - limit - 1];
+      const seconds = Math.max(1, Math.ceil((release + 3600000 - now) / 1000));
+      const label = kind === 'model' ? '本地模型请求限额' : `${kind} 本地限额`;
+      throw new Error(`${label}已用完（最近一小时 ${used.length}/${limit} 次，约 ${seconds} 秒后释放一个名额${kind === 'model' ? '；不是模型账户余额不足，可调整 config.json 的 agent.maxModelCallsPerHour' : ''}）`);
+    }
+    for (let i = 0; i < count; i++) this.data.counters.push({ kind, time: now });
     this.save();
   }
   async once(key, action) {

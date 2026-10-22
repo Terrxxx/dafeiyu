@@ -1,8 +1,9 @@
 export function imageUrl(value) {
   const url = new URL(value);
   if (url.protocol !== 'https:' || url.username || url.password || (url.port && url.port !== '443') ||
-      !['qq.com', 'qpic.cn', 'gtimg.cn'].some(domain => url.hostname === domain || url.hostname.endsWith('.' + domain))) {
-    throw new Error('图片不是受支持的QQ图片地址');
+      !(url.hostname === 'multimedia.nt.qq.com.cn' ||
+        ['qq.com', 'qpic.cn', 'gtimg.cn'].some(domain => url.hostname === domain || url.hostname.endsWith('.' + domain)))) {
+    throw new Error(`图片不是受支持的QQ图片地址（协议=${url.protocol}，域名=${url.hostname}）`);
   }
   return url;
 }

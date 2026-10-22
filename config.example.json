@@ -14,7 +14,7 @@
       "*"
     ],
     "pollSeconds": 90,
-    "browseMinutes": 180,
+    "browseMinutes": 30,
     "maxVideosPerRound": 3
   },
   "agent": {
@@ -27,7 +27,7 @@
   },
   "social": {
     "enabled": true,
-    "intervalMinutes": 60,
+    "intervalMinutes": 10,
     "qzoneEnabled": true,
     "qzoneVisibility": 4
   }

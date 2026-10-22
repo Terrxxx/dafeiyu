@@ -16,6 +16,6 @@ export async function handleQQMessage(msg, key, { agent, store, tools, qq, throt
   log('QQ 开始生成回复');
   tools.begin(msg.session, { ...msg, key });
   const text = await agent.run(msg.session, `${input}\n若想引用本条或真实@发送者，使用qq_reply_current。若直接输出普通文本，程序会自动发送；工具已回复后不要再次发送。可以按需要给自己安排后续任务。`);
-  if (!tools.currentAttempted) await store.once(key, async () => { tools.outgoing(); return qq.send(msg.kind, msg.target, text); });
+  if (!tools.currentAttempted) await store.once(key, async () => { tools.outgoing(false, text); return qq.send(msg.kind, msg.target, text); });
   log('QQ 回复已处理');
 }

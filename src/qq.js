@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { allowed } from './config.js';
+import { messageParts } from './message-parts.js';
 
 export function parseMessage(event, config, skipped = () => {}) {
   if (event.post_type !== 'message' || String(event.user_id) === String(event.self_id)) return null;
@@ -71,17 +72,29 @@ export class QQ {
     });
   }
   send(kind, target, text, options = {}) {
+    const parts = messageParts(text);
     const message = [];
     if (options.replyTo !== undefined) message.push({ type: 'reply', data: { id: String(options.replyTo) } });
     if (kind === 'group') for (const id of options.atUserIds || []) {
       if (!/^[1-9]\d*$/.test(String(id))) throw new Error('无效的@用户ID');
       message.push({ type: 'at', data: { qq: String(id) } }, { type: 'text', data: { text: ' ' } });
     }
-    message.push({ type: 'text', data: { text: text.slice(0, 1500) } });
-    return this.call(kind === 'group' ? 'send_group_msg' : 'send_private_msg', {
-      [kind === 'group' ? 'group_id' : 'user_id']: Number(target),
-      message,
-    });
+    return this.sendParts(kind, target, parts, message);
+  }
+  async sendParts(kind, target, parts, prefix) {
+    const receipts = [];
+    for (let i = 0; i < parts.length; i++) {
+      if (i) await delay(900);
+      try {
+        receipts.push(await this.call(kind === 'group' ? 'send_group_msg' : 'send_private_msg', {
+          [kind === 'group' ? 'group_id' : 'user_id']: Number(target),
+          message: [...(i === 0 ? prefix : []), { type: 'text', data: { text: parts[i] } }],
+        }));
+      } catch (error) {
+        throw new Error(`QQ 分条发送中断（已确认 ${receipts.length}/${parts.length} 条）：${error.message}`);
+      }
+    }
+    return parts.length === 1 ? receipts[0] : { messages: receipts, count: receipts.length };
   }
   close() { this.stopped = true; clearTimeout(this.reconnect); this.socket?.close(); }
 }

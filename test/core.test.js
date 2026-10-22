@@ -6,7 +6,7 @@ import path from 'node:path';
 import { Store, Queue } from '../src/store.js';
 import { parseMessage, ReplyThrottle } from '../src/qq.js';
 import { Bilibili, parseMention, signWbi } from '../src/bilibili.js';
-import { Agent } from '../src/agent.js';
+import { Agent, parseReplyDecision } from '../src/agent.js';
 import { SocialTools } from '../src/tools.js';
 import { handleQQMessage } from '../src/qq-handler.js';
 
@@ -14,6 +14,42 @@ function tempStore(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dafeiyu-test-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true })); return new Store(dir);
 }
+test('reply decision accepts complete fenced JSON but rejects ambiguous or truncated output', () => {
+  const choice = (content, finish_reason = 'stop') => ({ message: { content }, finish_reason });
+  assert.equal(parseReplyDecision(choice('```json\n{"reply":false}\n```')), false);
+  assert.equal(parseReplyDecision(choice(' {"reply":true} ')), true);
+  for (const value of ['', '我觉得要回复 {"reply":true}', '{"reply":"false"}', '{"reply":', '[{"reply":true}]']) {
+    assert.throws(() => parseReplyDecision(choice(value)));
+  }
+  assert.throws(() => parseReplyDecision(choice('{"reply":true}', 'length')), /截断/);
+  assert.throws(() => parseReplyDecision(undefined), /为空/);
+});
+test('invalid participation output retries once and records only diagnostic metadata', async t => {
+  const store = tempStore(t); let calls = 0;
+  const config = { apiKey: 'test', baseUrl: 'https://example.test', model: 'test', persona: 'test', agent: { maxModelCallsPerHour: 10, historyMessages: 4 } };
+  const agent = new Agent(config, store, {}, async () => {
+    calls++;
+    return { ok: true, json: async () => ({ choices: [{ finish_reason: 'stop', message: { content: calls === 1 ? 'private response text' : '{"reply":false}' } }] }) };
+  });
+  assert.equal(await agent.shouldReply('test', 'input'), false);
+  assert.equal(calls, 2);
+  assert.equal(store.data.counters.length, 2);
+  assert.equal(store.data.histories.test.length, 1);
+  const audit = fs.readFileSync(store.auditFile, 'utf8');
+  assert.match(audit, /reply-decision-invalid/); assert.ok(!audit.includes('private response text'));
+  calls = 0;
+  agent.request = async () => { calls++; return { ok: true, json: async () => ({ choices: [] }) }; };
+  await assert.rejects(agent.shouldReply('test', 'invalid'), /重试后仍无效/);
+  assert.equal(calls, 2);
+});
+test('unlimited model calls bypass existing usage without disabling outgoing limits', t => {
+  const store = tempStore(t);
+  store.reserve('model', 1);
+  assert.throws(() => store.reserve('model', 1), /本地模型请求限额已用完.*不是模型账户余额不足/);
+  for (let i = 0; i < 100; i++) store.reserve('model', 0);
+  assert.equal(store.data.counters.length, 1);
+  assert.throws(() => store.reserve('outgoing', 0));
+});
 test('group decision uses context without tools and keeps silent messages in group history', async t => {
   const store = tempStore(t); let body;
   const config = { apiKey: 'test', baseUrl: 'https://example.test', model: 'test', persona: 'test', agent: { maxModelCallsPerHour: 10, historyMessages: 4 } };
