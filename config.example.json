@@ -20,15 +20,17 @@
   "agent": {
     "maxToolRounds": 6,
     "maxOutputTokens": 1200,
-    "historyMessages": 16,
+    "historyMessages": 64,
     "maxModelCallsPerHour": 60,
     "maxOutgoingPerHour": 20,
-    "maxBiliCommentsPerHour": 3
+    "maxBiliCommentsPerHour": 3,
+    "contextMaxChars": 24000
   },
   "social": {
     "enabled": true,
     "intervalMinutes": 10,
     "qzoneEnabled": true,
     "qzoneVisibility": 4
-  }
+  },
+  "runtime": "harness"
 }

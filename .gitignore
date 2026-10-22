@@ -16,3 +16,5 @@ NapCat*.zip
 data/
 reports/
 *.log
+harness-runtime/
+.dsh/

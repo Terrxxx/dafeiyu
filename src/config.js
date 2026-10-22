@@ -9,6 +9,9 @@ export function loadConfig() {
   const config = JSON.parse(fs.readFileSync(local, 'utf8').replace(/^\uFEFF/, ''));
   config.qq.mergeSeconds ??= 8;
   config.qq.maxWaitSeconds ??= 25;
+  config.agent.contextMaxChars ??= 24000;
+  config.runtime ??= 'harness';
+  if (!['harness', 'direct'].includes(config.runtime)) throw new Error('runtime 必须为 harness 或 direct');
   config.social = { enabled: true, intervalMinutes: 10, qzoneEnabled: true, qzoneVisibility: 4, ...config.social };
   if (!(config.qq.mergeSeconds >= 1 && config.qq.maxWaitSeconds >= config.qq.mergeSeconds && config.qq.maxWaitSeconds <= 120)) throw new Error('消息等待时间须为1至120秒，最大等待须不小于合并等待');
   if (!Number.isInteger(config.social.intervalMinutes) || config.social.intervalMinutes < 1) throw new Error('自主社交间隔至少1分钟');

@@ -1,0 +1,40 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { Store } from '../src/store.js';
+import { SocialTools } from '../src/tools.js';
+
+test('favorite stickers require inspection and a known target; send a real image and remember it', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fish-stickers-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const store = new Store(dir); const sent = [];
+  const qq = { call: async (action, params) => {
+    if (action === 'fetch_custom_face') return ['https://gchat.qpic.cn/sticker', 'http://127.0.0.1/private', 'file:///secret'];
+    sent.push({ action, params }); return { message_id: 42 };
+  } };
+  t.mock.method(globalThis, 'fetch', async () => new Response(Buffer.from('image'), { headers: { 'content-type': 'image/png' } }));
+  const tools = new SocialTools({ qq: { enabled: true }, agent: { maxOutgoingPerHour: 10, historyMessages: 64 } }, store, qq, {});
+  tools.inspectImage = async data => { assert.match(data, /^data:image\/png;base64,/); return '捂脸笑的猫'; };
+  const current = { kind: 'private', target: '123', key: 'reply:1' };
+  tools.begin('qq:user:123', current);
+  const list = await tools.call('qq_list_stickers', {});
+  assert.equal(list.length, 1);
+  const args = { id: list[0].id, kind: 'private', target: '123' };
+  await assert.rejects(tools.call('qq_send_sticker', args), /先查看/);
+  await tools.call('qq_inspect_sticker', { id: args.id });
+  await assert.rejects(tools.call('qq_send_sticker', { ...args, target: '999' }), /目标/);
+  await tools.call('qq_send_sticker', args);
+  assert.equal(sent[0].action, 'send_private_msg');
+  assert.deepEqual(sent[0].params.message, [{ type: 'image', data: { file: 'base64://aW1hZ2U=' } }]);
+  assert.equal(tools.currentAttempted, true);
+  assert.match(store.context('qq:user:123')[0].content, /捂脸笑的猫/);
+  assert.equal(store.data.counters.filter(c => c.kind === 'outgoing').length, 1);
+  await assert.rejects(tools.call('qq_send_sticker', args), /本轮/);
+  tools.begin('qq:user:123', current);
+  await tools.call('qq_list_stickers', {});
+  await tools.call('qq_inspect_sticker', { id: args.id });
+  assert.equal((await tools.call('qq_send_sticker', args)).skipped, true);
+  assert.equal(sent.length, 1);
+});

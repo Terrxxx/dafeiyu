@@ -49,9 +49,25 @@ export class Store {
     }
   }
   remember(key, user, assistant, limit) {
+    this.appendHistory(key, 'user', user, limit);
+    this.appendHistory(key, 'assistant', assistant, limit);
+  }
+  appendHistory(key, role, content, limit = 64) {
     const history = this.data.histories[key] || [];
-    this.data.histories[key] = [...history, { role: 'user', content: user }, { role: 'assistant', content: assistant }].slice(-limit);
+    this.data.histories[key] = [...history, { role, content: String(content).slice(0, 30000), time: new Date().toISOString() }].slice(-limit);
     this.save();
+  }
+  context(key, limit = 64, maxChars = 24000, skipLast = false) {
+    const history = this.data.histories[key] || [];
+    const selected = (skipLast ? history.slice(0, -1) : history).slice(-limit);
+    const result = []; let remaining = maxChars;
+    for (let i = selected.length - 1; i >= 0 && remaining > 0; i--) {
+      const item = selected[i];
+      if (!['user', 'assistant'].includes(item.role) || typeof item.content !== 'string') continue;
+      const content = item.content.slice(-remaining);
+      result.unshift({ role: item.role, content }); remaining -= content.length;
+    }
+    return result;
   }
 }
 
