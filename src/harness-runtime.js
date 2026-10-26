@@ -20,7 +20,7 @@ export async function readJson(request, maxBytes = 24 * 1024 * 1024) {
 export function runIdFromMessages(messages) {
   const message = messages?.find(m => m.role === 'user');
   const text = typeof message?.content === 'string' ? message.content : message?.content?.find(b => b.type === 'text')?.text;
-  return text?.match(/^\[DAFEIYU_RUN:([a-zA-Z0-9-]+)\]/)?.[1];
+  return text?.match(/\[DAFEIYU_RUN:([a-zA-Z0-9-]+)\]/)?.[1];
 }
 
 export class HarnessRuntime {
@@ -119,12 +119,25 @@ export class HarnessRuntime {
       const run = this.runs.get(body.sessionId);
       if (!run?.useTools) return json(403, { error: '此会话不允许工具调用' });
       if (!this.tools.schemas.some(s => s.function.name === body.name)) return json(403, { error: '工具不在允许列表' });
-      try { return json(200, (await this.tools.call(body.name, body.args)) ?? null); }
-      catch (error) { return json(200, { error: error.message }); }
+      try {
+        const result = (await this.tools.call(body.name, body.args)) ?? null;
+        this.store.audit('harness-tool', { sessionId: body.sessionId, name: body.name, ok: true });
+        return json(200, result);
+      }
+      catch (error) {
+        this.store.audit('harness-tool', { sessionId: body.sessionId, name: body.name, ok: false, error: error.message });
+        return json(200, { error: error.message });
+      }
     }
     if (req.url !== '/v1/chat/completions') return json(404, { error: 'Not found' });
+    try { this.tools.sleep?.assertAwake(); }
+    catch (error) { return json(423, { error: { message: error.message } }); }
     const run = this.runs.get(runIdFromMessages(body.messages));
     if (!run) return json(403, { error: { message: '无效的 Harness 会话' } });
+    if (run.useTools && this.tools.schemas.some(s => !body.tools?.some(t => t.function?.name === s.function.name))) {
+      this.store.audit('harness-tools-missing', { sessionId: runIdFromMessages(body.messages) });
+      return json(503, { error: { message: 'Harness工具未完整加载，已阻止无工具执行，请检查插件参数适配' } });
+    }
     if (++run.calls > run.maxCalls) return json(429, { error: { message: '本轮模型请求次数已达上限' } });
     try { this.store.reserve('model', this.config.agent.maxModelCallsPerHour); }
     catch (error) { return json(429, { error: { message: error.message } }); }
@@ -143,13 +156,16 @@ export class HarnessRuntime {
     });
   }
   async run(input, { useTools = false, maxTokens = this.config.agent.maxOutputTokens, json = false, image } = {}) {
+    this.tools.sleep?.assertAwake();
     await this.start();
+    this.tools.sleep?.assertAwake();
     const sessionId = `dafeiyu-${randomUUID()}`;
-    const run = { useTools, maxTokens, json, calls: 0, maxCalls: useTools ? this.config.agent.maxToolRounds : 1, text: '', reason: null };
+    const run = { useTools, maxTokens, json, calls: 0, maxCalls: useTools ? this.config.agent.maxToolRounds + 1 : 1, text: '', reason: null };
     this.runs.set(sessionId, run);
     this.store.audit('harness-run', { sessionId, useTools });
     try {
-      const contentBlocks = [{ type: 'text', text: `[DAFEIYU_RUN:${sessionId}]\n${input}` }];
+      // Marker goes last: a run-unique string at the start would break prompt caching for everything after it.
+      const contentBlocks = [{ type: 'text', text: `${input}\n\n[DAFEIYU_RUN:${sessionId}]` }];
       if (image) contentBlocks.push(image);
       await this.rpc('session/prompt', { sessionId, contentBlocks });
       await this.rpc('session/wait', { sessionId }, 600000);

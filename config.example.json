@@ -1,12 +1,11 @@
 {
   "qq": {
     "enabled": true,
-    "allowUsers": [],
-    "allowGroups": [],
     "requireMentionInGroup": false,
     "cooldownSeconds": 15,
     "mergeSeconds": 8,
-    "maxWaitSeconds": 25
+    "maxWaitSeconds": 25,
+    "adminUsers": []
   },
   "bilibili": {
     "enabled": true,
@@ -15,7 +14,8 @@
     ],
     "pollSeconds": 90,
     "browseMinutes": 30,
-    "maxVideosPerRound": 3
+    "maxVideosPerRound": 3,
+    "maxDynamicsPerHour": 1
   },
   "agent": {
     "maxToolRounds": 6,
@@ -29,8 +29,23 @@
   "social": {
     "enabled": true,
     "intervalMinutes": 10,
+    "contactCooldownMinutes": 180,
+    "followupEnabled": true,
+    "followupWaitMinutes": 30,
+    "qzoneAutoReply": true,
+    "qzonePollMinutes": 10,
+    "voiceName": "chaowen",
     "qzoneEnabled": true,
-    "qzoneVisibility": 4
+    "qzoneVisibility": 1,
+    "maxQzonePostsPerHour": 1
   },
-  "runtime": "harness"
+  "runtime": "harness",
+  "logging": {
+    "replySummary": true
+  },
+  "web": {
+    "enabled": true,
+    "port": 3081,
+    "openBrowser": true
+  }
 }

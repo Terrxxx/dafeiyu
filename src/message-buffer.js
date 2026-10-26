@@ -25,6 +25,7 @@ export class MessageBuffer {
 export function mergeMessages(messages) {
   const last = messages.at(-1);
   return { ...last, mentioned: messages.some(m => m.mentioned),
+    sources: messages.map(m => ({ sender: m.sender, name: m.name, text: m.text, id: m.id, images: m.images })),
     text: messages.map(m => `${m.name || m.sender}（${m.sender}）：${m.text || '[图片]'}${m.images?.length ? ' [附图]' : ''}`).join('\n').slice(-16000),
     images: messages.flatMap(m => m.images || []).slice(0, 3),
   };

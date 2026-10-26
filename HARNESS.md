@@ -1,5 +1,7 @@
 # 本机 DeepSeek Harness
 
+工具适配修复：Harness 参数 DSL 不接受 JSON Schema 的 `minimum`、`maximum`、`maxItems` 等限制关键字，注册前需转换为说明文字；运行时限制仍由业务工具校验。模型请求发出前检查完整工具列表，缺失即报错；工具执行状态记录为 `harness-tool`，不能仅凭接管启动日志认定工具可用。测试覆盖完整社交工具注册及“查询→模拟发送→回执”，并已用真实模型完成该流程，未发送真实群消息。修改代码后需重新启动大肥鱼。
+
 已安装官方 npm 包 `@deepseek-ai/dsh@0.2.1-rc.2`，独立于大肥鱼的依赖。
 
 - 双击 `start-harness.cmd` 启动 Web 版，默认打开浏览器。

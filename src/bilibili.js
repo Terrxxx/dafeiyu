@@ -45,25 +45,27 @@ export function parseMention(event) {
 
 export class Bilibili {
   constructor(cookie, request = fetch) { this.cookie = cookie; this.request = request; this.key = ''; this.keyTime = 0; }
-  async api(endpoint, params = {}, post = false, signed = false) {
+  async api(endpoint, params = {}, post = false, signed = false, json = false) {
     if (signed && Date.now() - this.keyTime > 3600000) {
       const nav = await this.api('/x/web-interface/nav');
       const extract = value => new URL(value).pathname.split('/').pop().split('.')[0];
       this.key = extract(nav.wbi_img.img_url) + extract(nav.wbi_img.sub_url); this.keyTime = Date.now();
     }
     let body;
+    let csrf;
     if (post) {
-      const csrf = this.cookie.split(';').map(x => x.trim()).find(x => x.startsWith('bili_jct='))?.slice(9);
+      csrf = this.cookie.split(';').map(x => x.trim()).find(x => x.startsWith('bili_jct='))?.slice(9);
       if (!csrf) throw new Error('B站 Cookie 缺少 bili_jct，请重新扫码登录');
-      body = new URLSearchParams({ ...params, csrf });
+      body = json ? JSON.stringify(params) : new URLSearchParams({ ...params, csrf });
     }
     const query = signed ? signWbi(params, this.key) : new URLSearchParams(params).toString();
-    const response = await this.request(`https://api.bilibili.com${endpoint}${post ? '' : '?' + query}`, {
-      method: post ? 'POST' : 'GET', headers: { ...HEADERS, Cookie: this.cookie }, body, signal: AbortSignal.timeout(20000), redirect: 'error',
+    this.beforeRequest?.();
+    const response = await this.request(`https://api.bilibili.com${endpoint}${post ? (json ? '?csrf=' + encodeURIComponent(csrf) : '') : '?' + query}`, {
+      method: post ? 'POST' : 'GET', headers: { ...HEADERS, Cookie: this.cookie, ...(json ? { 'Content-Type': 'application/json' } : {}) }, body, signal: AbortSignal.timeout(20000), redirect: 'error',
     });
     if (!response.ok) throw new Error(`B站请求失败 HTTP ${response.status}`);
     const result = await response.json();
-    if (result.code !== 0) throw new Error(`B站接口返回错误码 ${result.code}`);
+    if (result.code !== 0) { const error = new Error(`B站接口返回错误码 ${result.code}`); error.confirmedFailure = true; throw error; }
     return result.data;
   }
   async popular() {
@@ -204,5 +206,37 @@ export class Bilibili {
     }
     await this.api('/x/web-interface/archive/like', { bvid, like: 1 }, true);
     return { liked: true };
+  }
+  async follow(uid) {
+    uid = String(uid);
+    if (!/^[1-9]\d*$/.test(uid)) throw new Error('UP主UID无效');
+    if (await this.ownId() === uid) throw new Error('不能关注自己');
+    const relation = await this.api('/x/relation', { fid: uid });
+    if (!Number.isInteger(relation?.attribute)) throw new Error('无法核验当前关注关系');
+    if ([1, 2, 6].includes(relation.attribute)) return { followed: true, alreadyFollowed: true, uid };
+    if (relation.attribute !== 0) throw new Error('当前关系不支持普通关注，不自动更改黑名单等设置');
+    await this.api('/x/relation/modify', { fid: uid, act: 1, re_src: 14 }, true);
+    return { followed: true, uid, url: `https://space.bilibili.com/${uid}` };
+  }
+  async favorite(bvid, folderId) {
+    validBvid(bvid);
+    if (!/^[1-9]\d*$/.test(String(folderId))) throw new Error('收藏夹ID无效');
+    const folders = await this.ownFolders();
+    if (!folders.items.some(x => x.id === String(folderId))) throw new Error('只能添加到当前账号自己的收藏夹');
+    const video = await this.api('/x/web-interface/view', { bvid });
+    if (!Number.isSafeInteger(video.aid) || video.aid < 1) throw new Error('视频aid无效');
+    await this.api('/x/v3/fav/resource/deal', { rid: video.aid, type: 2, add_media_ids: String(folderId), del_media_ids: '' }, true);
+    return { favorited: true, bvid, folderId: String(folderId) };
+  }
+  async publishDynamic(text) {
+    if (typeof text !== 'string' || !text.trim() || text.length > 1000) throw new Error('动态须为1至1000字');
+    await this.ensureDevice();
+    const data = await this.api('/x/dynamic/feed/create/dyn', { dyn_req: {
+      scene: 1, content: { contents: [{ raw_text: text.trim(), type: 1, biz_id: '' }] },
+      meta: { app_meta: { from: 'create.dynamic.web', mobi_app: 'web' } },
+    } }, true, false, true);
+    const id = data?.dyn_id_str || (Number.isSafeInteger(data?.dyn_id) ? String(data.dyn_id) : '');
+    if (!/^[1-9]\d*$/.test(id)) throw new Error('动态发布未取得有效ID，结果不确定');
+    return { dynamicId: id, url: `https://t.bilibili.com/${id}` };
   }
 }

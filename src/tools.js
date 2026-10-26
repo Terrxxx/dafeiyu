@@ -1,8 +1,12 @@
 import { createHash } from 'node:crypto';
-import { allowed } from './config.js';
 import { messageParts } from './message-parts.js';
 import { downloadImage, imageUrl } from './images.js';
 import { Personality } from './personality.js';
+import { Feelings } from './feelings.js';
+import { MediaLibrary } from './media.js';
+import { Qzone } from './qzone.js';
+import { BrowserSearch } from './browser-search.js';
+import { qqFeatureSchemas, executeQQFeature } from './qq-features.js';
 
 const schema = (name, description, properties = {}, required = []) => ({ type: 'function', function: { name, description, parameters: { type: 'object', properties, required, additionalProperties: false } } });
 const str = description => ({ type: 'string', description });
@@ -11,7 +15,11 @@ export class SocialTools {
     Object.assign(this, { config, store, qq, bili, tasks });
     this.videos = new Map(); this.targets = new Set(); this.scope = '';
     this.personality = new Personality(store);
+    this.feelings = new Feelings(store);
+    this.media = new MediaLibrary(store); this.qzone = new Qzone(qq); this.browser = new BrowserSearch(config.social?.browserPath);
     this.schemas = [
+      schema('self_set_wake_energy', '选择下次普通睡眠醒来精力80至100；不能改变零点强制睡、0%耗尽强制锁到次日8点规则', { energy: { type: 'integer', minimum: 80, maximum: 100 } }, ['energy']),
+      ...qqFeatureSchemas,
       schema('bili_my_history', '仅后台自主活动可用：读取登录账号最近20条观看历史，私人资料不得转述'),
       schema('bili_my_following', '仅后台自主活动可用：读取当前账号关注列表，每页20条', { page: { type: 'integer', minimum: 1, maximum: 100 } }),
       schema('bili_my_folders', '仅后台自主活动可用：读取当前账号收藏夹列表，最多100个'),
@@ -26,10 +34,13 @@ export class SocialTools {
       schema('qq_send_sticker', '发送本轮已看懂的收藏表情包，一轮最多一张；发到当前会话后不会自动追加最终文本', { id: str('已inspect的ID'), kind: { type: 'string', enum: ['private', 'group'] }, target: str('当前会话或已查询目标ID') }, ['id', 'kind', 'target']),
       schema('bili_popular', '获取B站当前热门视频，不限定主题'),
       schema('bili_like_video', '给本轮已读且喜欢的视频点赞，不取消已有赞', { bvid: str('BV号') }, ['bvid']),
+      schema('bili_follow_up', '关注本轮已实际读取视频的UP主；关注和点赞独立决定，已经关注不会重复操作', { bvid: str('本轮读过的该UP主视频BV号') }, ['bvid']),
+      schema('bili_favorite_video', '收藏本轮已读视频到本人收藏夹；先用bili_my_folders查看收藏夹，收藏和点赞独立决定', { bvid: str('本轮已读的BV号'), folderId: str('本人收藏夹ID') }, ['bvid', 'folderId']),
+      schema('bili_publish_dynamic', '发布B站公开文字动态，可含公开视频链接；不能泄露私人聊天和账号资料', { text: str('1至1000字正文') }, ['text']),
       schema('qzone_publish', '在自己的QQ空间发表文字说说（可含视频链接），不要泄露他人聊天', { text: str('说说正文') }, ['text']),
       schema('bili_read_video', '读取视频简介和第1分P字幕；不含画面', { bvid: str('BV号') }, ['bvid']),
       schema('qq_list_targets', '列出允许互动的QQ好友和群，作为分享候选目标'),
-      schema('qq_send_message', '向已查询的QQ好友或群分享视频等内容；不广播；发送成功有回执', { kind: { type: 'string', enum: ['private', 'group'] }, target: str('好友QQ或群号'), text: str('消息正文'), atUserIds: { type: 'array', items: str('群成员QQ号'), maxItems: 3 } }, ['kind', 'target', 'text']),
+      schema('qq_send_message', '向已查询的QQ好友或群发送消息；主动问话可标记expectReply，之后最多自主跟进一次', { kind: { type: 'string', enum: ['private', 'group'] }, target: str('好友QQ或群号'), text: str('消息正文'), expectReply: { type: 'boolean', description: '仅主动向好友提问且希望回应时为true，普通分享不标记' }, atUserIds: { type: 'array', items: str('群成员QQ号'), maxItems: 3 } }, ['kind', 'target', 'text']),
       schema('qq_group_members', '查看已查询群的成员，用于选择真实@对象', { groupId: str('群号') }, ['groupId']),
       schema('qq_reply_current', '回复当前消息，可引用原消息或@发送者；调用后不再自动发送最终文本', { text: str('回复正文'), mentionSender: { type: 'boolean' }, quote: { type: 'boolean' } }, ['text']),
       schema('task_create', '给自己安排一次未来任务，例如稍后找有趣视频分享或跟进话题；到时才执行，程序需要保持运行', { prompt: str('具体任务，包括需要的目标ID；不要转存其他会话隐私'), delayMinutes: { type: 'number', minimum: 1, maximum: 10080 } }, ['prompt', 'delayMinutes']),
@@ -39,16 +50,68 @@ export class SocialTools {
     ];
   }
   begin(scope, current = null) {
+    this.bili.activityScope = scope;
+    this.followupTarget = null;
+    this.onlySpaceComment = null;
+    this.proactiveTarget = null; this.activityKeys = new Set();
     this.scope = scope; this.current = current; this.currentAttempted = false;
     this.videos.clear(); this.targets.clear();
     this.stickers = new Map(); this.stickerAttempted = false;
+    this.spacePosts = new Map(); this.spaceComments = new Map(); this.webUrls = new Set();
+    this.knownUsers = new Set((current?.sources || (current ? [current] : [])).map(x => String(x.sender)));
     if (current) this.targets.add(`${current.kind}:${current.target}`);
   }
   outgoing(bili = false, text = null) {
+    this.sleep?.assertAwake();
     if (bili) this.store.reserve('bili-comments', this.config.agent.maxBiliCommentsPerHour);
     this.store.reserve('outgoing', this.config.agent.maxOutgoingPerHour, text === null ? 1 : messageParts(text).length);
   }
   async call(name, args) {
+    this.sleep?.assertAwake();
+    if (name === 'self_set_wake_energy') return this.sleep.setWakeEnergy(args.energy);
+    if (this.followupTarget && (/^qq_(?:send|reply|set_avatar|save_sticker|recall)/.test(name) || ['qzone_publish', 'qzone_reply_comment', 'qzone_like_post', 'qzone_comment_post', 'bili_post_comment', 'bili_favorite_video', 'bili_publish_dynamic', 'bili_follow_up', 'task_create'].includes(name))) {
+      const { id, sentAt } = this.followupTarget;
+      if (name !== 'qq_send_message' || args.kind !== 'private' || String(args.target) !== id || typeof args.text !== 'string' || args.text.length > 80 ||
+          !this.feelings.followupSendAllowed(id, sentAt)) throw new Error('本轮跟进已结束、用户已回复或目标不匹配');
+      this.feelings.user(id).followup.used = true; this.store.save();
+    }
+    if (this.onlySpaceComment && (/^qq_(?:send|reply|set_avatar|save_sticker|recall)/.test(name) || ['qzone_publish', 'qzone_reply_comment', 'qzone_like_post', 'qzone_comment_post', 'bili_post_comment', 'bili_favorite_video', 'bili_publish_dynamic', 'bili_follow_up', 'task_create'].includes(name))) {
+      if (name !== 'qzone_reply_comment' || args.commentRef !== this.onlySpaceComment) throw new Error('本轮只允许回复指定的新空间评论');
+    }
+    if (this.proactiveTarget && ['qq_send_message', 'qq_send_sticker', 'qq_send_image', 'qq_send_voice', 'qq_set_avatar', 'qzone_reply_comment', 'qzone_like_post', 'qzone_comment_post', 'qzone_publish', 'bili_post_comment', 'bili_favorite_video', 'bili_publish_dynamic', 'bili_follow_up', 'task_create'].includes(name)) {
+      if (!['qq_send_message', 'qq_send_sticker', 'qq_send_image', 'qq_send_voice'].includes(name) || args.kind !== 'private' || String(args.target) !== this.proactiveTarget) throw new Error('本轮主动聊天只可联系所选用户');
+    }
+    const proactive = !this.current && ['autonomous-social', 'autonomous-browse', 'autonomous-contact'].includes(this.scope);
+    const privateSend = ['qq_send_message', 'qq_send_sticker', 'qq_send_image', 'qq_send_voice'].includes(name) && args.kind === 'private';
+    if (proactive && privateSend && !this.feelings.canContact(String(args.target), this.config.social?.contactCooldownMinutes ?? 180)) throw new Error('暂不主动联系：用户要求暂停、尚未回复、正在聊天或仍在冷却期');
+    try {
+      const result = await this.execute(name, args);
+      if (result?.skipped || result?.alreadyLiked) return result;
+      if (['qq_send_message', 'qq_send_image', 'qq_send_voice', 'qq_send_sticker', 'qq_reply_current'].includes(name)) {
+        const recipient = name === 'qq_reply_current' ? this.current : args;
+        this.store.recordSent(recipient.kind, recipient.target, result, args.text || `[${name}]`);
+        this.sleep?.recordOutgoing?.(recipient.kind, recipient.target, result);
+      }
+      if (['bili_post_comment', 'qzone_reply_comment', 'qzone_comment_post'].includes(name)) this.sleep?.noteChat?.(`comment:${name}:${Date.now()}`);
+      if (proactive && privateSend) this.feelings.contacted(String(args.target), args.expectReply === true || /[？?]/.test((args.text || '').replace(/https?:\/\/\S+/g, '')) ? args.text : '', result);
+      const activityKey = `${name}:${args.bvid || args.id || ''}`;
+      if (!this.activityKeys?.has(activityKey)) {
+        this.activityKeys?.add(activityKey);
+        const delta = name === 'bili_read_video' ? { curiosity: 1 } : name.startsWith('qq_send') || name === 'qq_reply_current' ? { joy: 0.5 } : { curiosity: 0.1 };
+        this.feelings.event(`action:${this.scope}:${Date.now()}:${activityKey}`, delta, 'action');
+        if (name === 'bili_read_video' && this.experienceVideo) {
+          try { await this.experienceVideo(result); }
+          catch (error) { this.store.audit('video-emotion-error', { message: error.message }); }
+        }
+      }
+      return result;
+    } catch (error) {
+      this.feelings.event(`error:${this.scope}:${name}:${Math.floor(Date.now() / 600000)}`, { irritation: 0.5 }, 'tool-error');
+      throw error;
+    }
+  }
+  async execute(name, args) {
+    if (qqFeatureSchemas.some(s => s.function.name === name)) return executeQQFeature(this, name, args);
     const accountReaders = { bili_my_history: ['ownHistory', []], bili_my_following: ['ownFollowing', [args.page]], bili_my_folders: ['ownFolders', []], bili_my_favorites: ['ownFavorites', [args.folderId, args.page]] };
     if (Object.hasOwn(accountReaders, name)) {
       if (!this.config.bilibili.enabled) throw new Error('B站已禁用');
@@ -90,8 +153,12 @@ export class SocialTools {
         const data = await downloadImage(sticker.url);
         sticker.description = await this.inspectImage(data);
         sticker.data = data;
+        try {
+          const asset = this.media.ingest(data, sticker.description, this.scope);
+          this.media.markSticker(asset.id); sticker.imageId = asset.id;
+        } catch (error) { this.store.audit('sticker-cache-error', { message: error.message }); }
       }
-      return { id: args.id, description: sticker.description };
+      return { id: args.id, description: sticker.description, imageId: sticker.imageId };
     }
     if (name === 'qq_send_sticker') {
       if (!this.config.qq.enabled || !this.targets.has(`${args.kind}:${args.target}`)) throw new Error('请先查询可用QQ目标');
@@ -109,16 +176,20 @@ export class SocialTools {
           message: [{ type: 'image', data: { file: 'base64://' + sticker.data.split(',')[1] } }],
         });
         if (receipt?.message_id === undefined) throw new Error('表情发送未返回消息ID，状态不明');
+        if (sticker.imageId) this.media.markSent(sticker.imageId);
         this.store.appendHistory(`qq:${args.kind === 'group' ? 'group' : 'user'}:${args.target}`, 'assistant', `[已发送表情包：${sticker.description}]`, this.config.agent.historyMessages);
         return receipt;
       });
     }
     if (name === 'qzone_publish') {
       if (!this.config.qq.enabled || !this.config.social?.qzoneEnabled) throw new Error('空间发布未启用');
+      const limit = this.config.social.maxQzonePostsPerHour ?? 1;
+      if (limit === 0) throw new Error('QQ空间发布限额为0，已禁止发布');
       if (typeof args.text !== 'string' || !args.text.trim() || args.text.length > 1000) throw new Error('说说长度须为1至1000字符');
       const hash = createHash('sha256').update(args.text.trim()).digest('hex');
+      if (this.store.data.actions[`qzone:${hash}`]) return this.store.once(`qzone:${hash}`, async () => null);
+      this.store.reserve('qzone', limit); this.outgoing();
       return this.store.once(`qzone:${hash}`, async () => {
-        this.store.reserve('qzone', 1); this.outgoing();
         const result = await this.qq.call('send_qzone_msg', { content: args.text, images: [], ugc_right: this.config.social.qzoneVisibility, target_uins: [] });
         if (!result?.tid) throw new Error('空间发布未返回tid，状态不明');
         return { tid: result.tid };
@@ -128,6 +199,35 @@ export class SocialTools {
       if (!this.config.bilibili.enabled || !this.videos.has(args.bvid)) throw new Error('请先读取视频');
       return this.store.once(`bili-like:${args.bvid}`, async () => {
         this.store.reserve('bili-likes', 10); return this.bili.like(args.bvid);
+      });
+    }
+    if (name === 'bili_follow_up') {
+      if (!this.config.bilibili.enabled) throw new Error('B站已禁用');
+      const video = this.videos.get(args.bvid);
+      if (!video || !/^[1-9]\d*$/.test(String(video.authorId))) throw new Error('先读取该UP主的视频，确认真实作者UID');
+      return this.store.once(`bili-follow:${video.authorId}`, async () => {
+        this.store.reserve('bili-follows', 10);
+        return this.bili.follow(video.authorId);
+      });
+    }
+    if (name === 'bili_favorite_video') {
+      if (!this.config.bilibili.enabled || !this.videos.has(args.bvid)) throw new Error('请先读取视频');
+      if (!/^[1-9]\d*$/.test(String(args.folderId))) throw new Error('收藏夹ID无效');
+      return this.store.once(`bili-favorite:${args.bvid}:${args.folderId}`, async () => {
+        this.store.reserve('bili-favorites', 10);
+        return this.bili.favorite(args.bvid, args.folderId);
+      });
+    }
+    if (name === 'bili_publish_dynamic') {
+      if (!this.config.bilibili.enabled) throw new Error('B站已禁用');
+      const limit = this.config.bilibili.maxDynamicsPerHour ?? 1;
+      if (limit === 0) throw new Error('B站动态发布限额为0，已禁止发布');
+      if (typeof args.text !== 'string' || !args.text.trim() || args.text.length > 1000) throw new Error('动态须为1至1000字');
+      const hash = createHash('sha256').update(args.text.trim()).digest('hex');
+      if (this.store.data.actions[`bili-dynamic:${hash}`]) return this.store.once(`bili-dynamic:${hash}`, async () => null);
+      this.store.reserve('bili-dynamics', limit); this.outgoing();
+      return this.store.once(`bili-dynamic:${hash}`, async () => {
+        return this.bili.publishDynamic(args.text.trim());
       });
     }
     if (name.startsWith('task_')) {
@@ -153,6 +253,7 @@ export class SocialTools {
     if (name === 'qq_group_members') {
       if (!this.targets.has(`group:${args.groupId}`)) throw new Error('请先查询可用QQ群');
       const members = await this.qq.call('get_group_member_list', { group_id: Number(args.groupId) });
+      for (const m of members.slice(0, 200)) this.knownUsers.add(String(m.user_id));
       return members.slice(0, 200).map(x => ({ id: String(x.user_id), name: x.card || x.nickname }));
     }
     if (name === 'bili_popular') {
@@ -169,10 +270,11 @@ export class SocialTools {
       const friends = await this.qq.call('get_friend_list');
       const groups = await this.qq.call('get_group_list');
       const targets = [
-        ...friends.filter(x => allowed(this.config.qq.allowUsers, x.user_id)).map(x => ({ kind: 'private', id: String(x.user_id), name: x.remark || x.nickname })),
-        ...groups.filter(x => allowed(this.config.qq.allowGroups, x.group_id)).map(x => ({ kind: 'group', id: String(x.group_id), name: x.group_name })),
+        ...friends.map(x => ({ kind: 'private', id: String(x.user_id), name: x.remark || x.nickname })),
+        ...groups.map(x => ({ kind: 'group', id: String(x.group_id), name: x.group_name })),
       ];
       for (const t of targets) this.targets.add(`${t.kind}:${t.id}`);
+      for (const t of targets) if (t.kind === 'private') this.knownUsers.add(t.id);
       return targets.slice(0, 150);
     }
     if (name === 'qq_send_message') {

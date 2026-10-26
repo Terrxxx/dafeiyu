@@ -5,7 +5,7 @@ import { SocialTools } from '../src/tools.js';
 
 test('账号读取只接受后台固定scope，禁用B站时也拒绝', async () => {
   let calls = 0;
-  const tools = new SocialTools({ bilibili: { enabled: true } }, { data: {} }, {}, { ownHistory: async () => { calls++; return []; } });
+  const tools = new SocialTools({ bilibili: { enabled: true } }, { data: {}, save() {} }, {}, { ownHistory: async () => { calls++; return []; } });
   for (const scope of ['private:1', 'group:1', 'autonomous-browse-fake', 'bili:1']) {
     tools.begin(scope);
     await assert.rejects(() => tools.call('bili_my_history', {}));

@@ -97,7 +97,14 @@ test('QQ filters self messages and requires real group mention', () => {
   event.message.push({ type: 'at', data: { qq: '1' } });
   assert.equal(parseMessage(event, config).session, 'qq:group:3');
   event.user_id = 1; assert.equal(parseMessage(event, config), null);
-  event.user_id = 2; config.allowGroups = ['4']; assert.equal(parseMessage(event, config), null);
+  event.user_id = 2; config.allowGroups = ['4']; assert.equal(parseMessage(event, config).sender, '2');
+});
+test('QQ管理员名单不限制陌生人私聊或其他群，旧白名单不再拦截', () => {
+  const config = { adminUsers: ['100'], allowUsers: ['100'], allowGroups: [], requireMentionInGroup: false };
+  const event = { post_type: 'message', message_type: 'private', user_id: 200, self_id: 1, message_id: 10, message: [{ type: 'text', data: { text: '你好' } }] };
+  assert.equal(parseMessage(event, config).session, 'qq:user:200');
+  event.message_type = 'group'; event.group_id = 300;
+  assert.equal(parseMessage(event, config).session, 'qq:group:300');
 });
 test('uncertain sends are persisted and never replayed on restart', async t => {
   const store = tempStore(t); let calls = 0;

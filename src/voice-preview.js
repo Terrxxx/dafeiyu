@@ -1,0 +1,10 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { loadConfig, ROOT } from './config.js';
+import { synthesizeSpeech } from './media.js';
+const config = loadConfig();
+const directory = path.join(ROOT, 'data/tts');
+const bytes = await synthesizeSpeech('你好呀，我是大肥鱼。今天也想找你聊聊天。', directory, config.social.voiceName);
+const file = path.join(directory, 'preview.wav');
+fs.writeFileSync(file, bytes);
+console.log(`试听已保存：${file}（${((bytes.length - 44) / bytes.readUInt32LE(28)).toFixed(1)}秒），未发送到QQ`);

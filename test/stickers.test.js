@@ -23,7 +23,9 @@ test('favorite stickers require inspection and a known target; send a real image
   assert.equal(list.length, 1);
   const args = { id: list[0].id, kind: 'private', target: '123' };
   await assert.rejects(tools.call('qq_send_sticker', args), /先查看/);
-  await tools.call('qq_inspect_sticker', { id: args.id });
+  const inspected = await tools.call('qq_inspect_sticker', { id: args.id });
+  assert.ok(inspected.imageId);
+  assert.equal(tools.media.get(inspected.imageId, 'autonomous-social').savedSticker, true);
   await assert.rejects(tools.call('qq_send_sticker', { ...args, target: '999' }), /目标/);
   await tools.call('qq_send_sticker', args);
   assert.equal(sent[0].action, 'send_private_msg');

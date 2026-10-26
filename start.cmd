@@ -1,5 +1,5 @@
 @echo off
 cd /d "%~dp0"
 if not exist .env copy .env.example .env >nul
-node --env-file-if-exists=.env src/main.js
+node --env-file-if-exists=.env src/launcher.js
 pause

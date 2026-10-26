@@ -33,7 +33,13 @@ export async function describeMessageImages(msg, qq, agent, log) {
         data = await downloadImage(info.url);
       }
       if (!data) throw new Error('未取得图片地址');
-      summaries.push(await agent.describeImage(data));
+      const description = await agent.describeImage(data);
+      let reference = '';
+      try {
+        const asset = agent.tools?.media?.ingest(data, description, msg.session);
+        if (asset) reference = `；可用图片ID=${asset.id}`;
+      } catch (error) { log(`图片素材未缓存：${error.message}`); }
+      summaries.push(description + reference);
     } catch (error) {
       log(`图片读取失败：${error.message}`);
       summaries.push('图片读取失败，不能猜测画面；需要时请对方重发或说明。');

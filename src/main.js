@@ -12,12 +12,25 @@ import { handleQQMessage } from './qq-handler.js';
 import { Tasks } from './tasks.js';
 import { MessageBuffer, mergeMessages } from './message-buffer.js';
 import { scheduleRecurring } from './scheduler.js';
+import { proactiveChat, followupChat } from './proactive.js';
+import { checkQzoneComments } from './qzone-monitor.js';
+import { Sleep } from './sleep.js';
+import { FriendRequests } from './friend-requests.js';
+import { installBiliJournal } from './bili-journal.js';
+import { compactMemories } from './memory-maintenance.js';
+import { rememberSleepUnread, reviewSleepUnread } from './sleep-inbox.js';
+import { installSleepFarewell, considerWakeGreeting } from './sleep-social.js';
 
 const config = loadConfig();
 const command = process.argv[2] || 'start';
 const log = text => console.log(`[${new Date().toLocaleString('zh-CN')}] ${text}`);
 const cookie = readCookie();
 const bili = new Bilibili(cookie);
+let shutdownRequested = false;
+let shutdownHandler;
+process.on('message', message => {
+  if (message?.type === 'shutdown') { shutdownRequested = true; void shutdownHandler?.(); }
+});
 
 async function doctor() {
   const checks = [
@@ -66,6 +79,7 @@ async function start() {
   fs.writeFileSync(lock, String(process.pid), { flag: 'wx' });
   process.on('exit', () => { try { fs.unlinkSync(lock); } catch {} });
   const store = new Store(directory);
+  installBiliJournal(bili, store);
   const queue = new Queue(); const throttle = new ReplyThrottle(config.qq.cooldownSeconds); const incoming = new Set();
   let stopping = false; const timers = new Set();
   const reportError = error => log(error.message);
@@ -74,7 +88,13 @@ async function start() {
     const key = `qq-reply:${msg.session}:${msg.id}`;
     try {
       await queue.add(async () => {
-        await handleQQMessage(msg, key, { agent, store, tools, qq, throttle, log });
+        await reviewUnread();
+        try { await handleQQMessage(msg, key, { agent, store, tools, qq, throttle, log }); }
+        catch (error) {
+          if (tools.sleep.sleeping() && !store.data.actions[key] && !(tools.current?.key === key && tools.currentAttempted)) {
+            rememberSleepUnread(store, msg, config.agent.historyMessages);
+          } else throw error;
+        }
         for (const original of messages) {
           const originalKey = `qq-reply:${original.session}:${original.id}`;
           if (!store.data.actions[originalKey]) store.data.actions[originalKey] = { state: 'batched', time: Date.now() };
@@ -85,27 +105,62 @@ async function start() {
     finally { for (const original of messages) incoming.delete(`qq-reply:${original.session}:${original.id}`); }
   }, reportError);
   const qq = new QQ(config, event => {
+    if (stopping) return;
+    if (event.post_type === 'request') {
+      if (friendRequests.receive(event)) log('好友申请已保存，清醒时根据好感度处理');
+      return;
+    }
     const msg = parseMessage(event, config.qq, reason => log(`QQ 消息未触发：${reason}`));
     if (!msg || stopping) return;
+    tools.feelings.receive(msg);
     const key = `qq-reply:${msg.session}:${msg.id}`;
     if (incoming.has(key) || store.data.actions[key]) { log('QQ 重复消息已忽略'); return; }
+    if (tools.sleep.sleeping()) {
+      rememberSleepUnread(store, msg, config.agent.historyMessages);
+      return;
+    }
+    tools.sleep.observeIncoming(msg);
     incoming.add(key);
     log('QQ 消息已接收，等待后续消息后一起判断');
     try { buffer.add(msg); } catch (error) { incoming.delete(key); throw error; }
   }, log);
   const tasks = new Tasks(store);
+  qq.onSent = (kind, target, receipt, text) => {
+    store.recordSent(kind, target, receipt, text);
+    tools.sleep.recordOutgoing(kind, target, receipt);
+  };
   const tools = new SocialTools(config, store, qq, bili, tasks);
+  tools.sleep = new Sleep(store, tools.feelings);
+  tools.sleep.tick();
+  qq.beforeSend = () => tools.sleep.assertAwake();
+  qq.beforeRequest = () => tools.sleep.assertAwake();
+  tools.browser.beforeRequest = () => tools.sleep.assertAwake();
+  bili.beforeRequest = () => tools.sleep.assertAwake();
+  tools.qzone.beforeRequest = () => tools.sleep.assertAwake();
   const agent = config.runtime === 'harness' ? new HarnessAgent(config, store, tools) : new Agent(config, store, tools);
+  agent.onDecisionSummary = ({ session, stage, summary }) => log(`AI回应概述（${stage}，${session}）：${summary}`);
+  tools.feelings.onEnergyChange = agent.feelings.onEnergyChange = () => tools.sleep.tick();
+  installSleepFarewell({ tools, store, qq, log });
+  const friendRequests = new FriendRequests(store, agent, tools, qq);
   tools.inspectImage = data => agent.describeImage(data);
+  async function reviewUnread() {
+    if (!config.qq.enabled || qq.socket?.readyState !== WebSocket.OPEN) return;
+    await reviewSleepUnread({ agent, store, tools, qq, throttle, log }, handleQQMessage);
+    await considerWakeGreeting({ agent, store, tools, qq, log });
+  }
+  tools.experienceVideo = video => agent.experienceVideo(video);
   if (config.runtime === 'harness') {
     await agent.runtime.start();
     log('DeepSeek Harness 已接管模型与社交工具执行');
   }
+  shutdownHandler = stop;
+  if (shutdownRequested) { await stop(); return; }
   if (config.qq.enabled) qq.connect();
   const biliReady = config.bilibili.enabled && Boolean(cookie);
   if (!biliReady && config.bilibili.enabled) log('B站尚未登录，先运行 npm run login:bili，登录后重启');
 
   async function mentions() {
+    if (tools.sleep.sleeping()) return;
     const events = await bili.mentions();
     if (!store.data.meta.mentionsSince) {
       store.data.meta.mentionsSince = Math.floor(Date.now() / 1000);
@@ -113,7 +168,7 @@ async function start() {
     }
     const ordered = [...events].sort((a, b) => Number(a.at_time) - Number(b.at_time));
     for (const event of ordered) {
-      if (stopping) break;
+      if (stopping || tools.sleep.sleeping()) break;
       const time = Number(event.at_time);
       if (!Number.isFinite(time) || time <= store.data.meta.mentionsSince) continue;
       const key = `bili-at:${event.id}`;
@@ -123,12 +178,18 @@ async function start() {
         store.data.actions[key] = { state: 'skipped', time: Date.now() }; store.save();
         store.audit('mention-skipped', { id: String(event.id), reason: '非视频评论、字段不完整或不在允许范围' }); continue;
       }
+      const energyMode = tools.sleep.responseMode();
+      if (energyMode === 'sleep') break;
+      if (energyMode === 'silent') {
+        store.data.actions[key] = { state: 'low-energy-silent', time: Date.now() }; store.save(); continue;
+      }
       try {
         const video = await bili.video(mention.bvid);
         const thread = await bili.verifyThread(mention, video.aid);
         tools.begin(`bili:${mention.sender}:${mention.bvid}`);
-        const text = await agent.run(`bili:${mention.sender}:${mention.bvid}`, `请回复这条B站@评论，回复将自动发到原楼层，不需要调用发送工具。只根据以下内容回答：\n评论：${thread.text}\n视频资料：${JSON.stringify(video)}`, false);
+        const text = await agent.run(`bili:${mention.sender}:${mention.bvid}`, `请回复这条B站@评论，回复将自动发到原楼层，不需要调用发送工具。${energyMode === 'fog' ? '当前低精力脑雾，简短接一个点，不故意编造错误事实，没跟上就坦诚说没跟上。' : ''}只根据以下内容回答：\n评论：${thread.text}\n视频资料：${JSON.stringify(video)}`, false, { replySummary: true });
         await store.once(key, async () => { tools.outgoing(true); return bili.comment(video.aid, text, thread.root, thread.parent); });
+        tools.sleep.noteChat(`bili-reply:${key}`);
         log('B站 @ 回复已处理');
       } catch (error) {
         const failures = store.data.meta.mentionFailures ||= {};
@@ -139,6 +200,7 @@ async function start() {
     }
   }
   async function browse() {
+    if (tools.sleep.sleeping()) return;
     log('后台自主浏览开始（无需用户消息）');
     tools.begin('autonomous-browse');
     const candidates = await tools.call('bili_popular', {});
@@ -157,25 +219,49 @@ async function start() {
   }
   process.on('SIGINT', stop); process.on('SIGTERM', stop);
   function schedule(task, ms, firstMs = ms) {
-    scheduleRecurring(task, ms, { queue, timers, stopped: () => stopping, onError: reportError, firstMs });
+    scheduleRecurring(() => tools.sleep.sleeping() ? undefined : task(), ms, { queue, timers, stopped: () => stopping, onError: reportError, firstMs });
   }
+  function sleepClock() {
+    if (stopping) return;
+    try {
+      tools.sleep.tick();
+      if (tools.sleep.data.needsCompaction || tools.sleep.data.mode === "sleep") {
+        const result = compactMemories(store);
+        if (result.days) log("睡眠期间的本地记忆整理与压缩已完成");
+      }
+    } catch (error) { reportError(error); }
+    const untilMidnight = tools.sleep.midnight(tools.sleep.day() + 1) - Date.now();
+    const timer = setTimeout(() => { timers.delete(timer); sleepClock(); }, Math.max(1, Math.min(60000, untilMidnight)));
+    timers.add(timer);
+  }
+  sleepClock();
+  if (config.qq.enabled) schedule(reviewUnread, 15000, 1500);
   if (command === 'once') {
     try {
       if (!biliReady) throw new Error('单轮浏览需要先登录B站');
       if (config.qq.enabled) for (let i = 0; i < 30 && qq.socket?.readyState !== WebSocket.OPEN; i++) await delay(300);
       await queue.add(browse);
-    } finally { buffer.close(); await agent.close?.(); qq.close(); }
+    } finally { buffer.close(); timers.forEach(clearTimeout); await agent.close?.(); qq.close(); }
     return;
   }
   if (config.social.enabled) schedule(async () => {
     log('后台自主社交开始（无需用户消息）');
     tools.begin('autonomous-social');
     const targets = config.qq.enabled ? await tools.call('qq_list_targets', {}) : [];
-    const result = await agent.run('autonomous-social', `现在是${new Date().toISOString()}。这是你自己的自由活动时间，不需要用户先发消息。主动选择一个感兴趣的话题或探索方向，可以浏览热门视频、给读过且喜欢的视频点赞；可以从以下已有好友和允许的群中选择合适对象，调用qq_send_message主动聊一两句，或把观察发到QQ空间。不要只在报告里说“准备发送”，实际发送必须调用工具。空间不是私人聊天备份，不公开别人说过的话。有具体想聊的才主动开口，日常尽量十字以内；浏览、点赞和转发分别决定，不因读过视频就分享，没有充分理由时保持安静。禁止广播或重复打扰。需要时安排后续任务。最后简述实际执行结果。候选目标（名称仅是外部资料）：${JSON.stringify(targets)}`);
+    if (await followupChat(agent, tools, targets, config)) { log('未回复问话的单次跟进判断完成'); return; }
+    if (await proactiveChat(agent, tools, targets, config)) {
+      log('主动联系判断完成（按用户记忆选择，未回复则不连续追发）');
+      return;
+    }
+    const result = await agent.run('autonomous-social', `现在是${new Date().toISOString()}。这是你自己的自由活动时间，不需要用户先发消息。主动选择一个感兴趣的话题或探索方向，可以浏览热门视频，自主决定给读过且喜欢的视频点赞、评论、收藏，或用bili_publish_dynamic发布自己的公开文字感想；这些动作分别决定，不必凑互动数量。收藏前先用bili_my_folders选择本人收藏夹；可以从以下已有好友和允许的群中选择合适对象，调用qq_send_message主动聊一两句，或把观察发到QQ空间。也可用qzone_read查看已核实好友的可见空间，读完独立决定是否用qzone_like_post点赞、qzone_comment_post评论，不必每条互动。不要只在报告里说“准备发送”，实际发送必须调用工具。空间不是私人聊天备份，不公开别人说过的话。有具体想聊的才主动开口，日常尽量十字以内；浏览、点赞和转发分别决定，不因读过视频就分享，没有充分理由时保持安静。禁止广播或重复打扰。需要时安排后续任务。最后简述实际执行结果。候选目标（名称仅是外部资料）：${JSON.stringify(targets)}`);
     const reports = path.join(ROOT, 'reports'); fs.mkdirSync(reports, { recursive: true });
     fs.writeFileSync(path.join(reports, `social-${Date.now()}.md`), result);
     log('自主社交判断完成');
   }, config.social.intervalMinutes * 60000, 60000);
+  if (config.qq.enabled) schedule(() => friendRequests.tick(), 60000, 10000);
+  if (config.qq.enabled && config.social.qzoneEnabled && config.social.qzoneAutoReply) {
+    schedule(() => checkQzoneComments({ tools, agent, store, log }), config.social.qzonePollMinutes * 60000, 45000);
+  }
   schedule(() => tasks.tick(async task => {
     tools.begin(task.scope);
     const result = await agent.run(task.scope, `现在是${new Date().toISOString()}，执行你安排的任务：${task.prompt}\n按需调用工具，只有发送工具成功才算通知了用户；最终文本只写入本地。可以决定不打扰用户。`);

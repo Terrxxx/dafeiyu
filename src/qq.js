@@ -1,13 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { allowed } from './config.js';
 import { messageParts } from './message-parts.js';
 
 export function parseMessage(event, config, skipped = () => {}) {
   if (event.post_type !== 'message' || String(event.user_id) === String(event.self_id)) return null;
   if (!['private', 'group'].includes(event.message_type)) return null;
   const group = event.message_type === 'group';
-  if (!allowed(group ? config.allowGroups : config.allowUsers, group ? event.group_id : event.user_id)) { skipped('不在允许的会话范围'); return null; }
   if (!Array.isArray(event.message)) { skipped('消息格式不是 array，请检查 NapCat 配置'); return null; }
   const mentioned = event.message.some(x => x.type === 'at' && String(x.data?.qq) === String(event.self_id));
   if (group && config.requireMentionInGroup && !mentioned) { skipped('群消息未 @ 机器人'); return null; }
@@ -33,15 +31,15 @@ export class ReplyThrottle {
 }
 
 export class QQ {
-  constructor(config, onMessage, log = console.log) {
-    Object.assign(this, { config, onMessage, log });
+  constructor(config, onMessage, log = console.log, createSocket = url => new WebSocket(url)) {
+    Object.assign(this, { config, onMessage, log, createSocket });
     this.pending = new Map(); this.stopped = false; this.socket = null; this.reconnect = null;
   }
   connect() {
     if (this.stopped) return;
     const url = new URL(this.config.wsUrl);
     if (this.config.wsToken) url.searchParams.set('access_token', this.config.wsToken);
-    this.socket = new WebSocket(url);
+    this.socket = this.createSocket(url);
     const socket = this.socket;
     socket.addEventListener('open', () => this.log('QQ OneBot 已连接'));
     socket.addEventListener('message', event => {
@@ -51,8 +49,8 @@ export class QQ {
         const pending = this.pending.get(data.echo); this.pending.delete(data.echo); clearTimeout(pending.timer);
         if (data.status === 'ok' && data.retcode === 0) pending.resolve(data.data);
         else pending.reject(new Error(`OneBot 动作失败 (${data.retcode})`));
-      } else if (data.post_type === 'message') {
-        Promise.resolve(this.onMessage(data)).catch(error => this.log(`QQ 处理失败：${error.message}`));
+      } else if (data.post_type === 'message' || (data.post_type === 'request' && data.request_type === 'friend')) {
+        Promise.resolve().then(() => this.onMessage(data)).catch(error => this.log(`QQ 处理失败：${error.message}`));
       }
     });
     socket.addEventListener('error', () => this.log('QQ 连接异常，请检查 NapCat 地址和 Token'));
@@ -63,12 +61,21 @@ export class QQ {
     });
   }
   call(action, params = {}) {
+    this.beforeRequest?.();
+    if (['send_private_msg', 'send_group_msg', 'set_friend_add_request'].includes(action)) this.beforeSend?.();
     if (this.socket?.readyState !== WebSocket.OPEN) return Promise.reject(new Error('NapCat 尚未连接'));
     return new Promise((resolve, reject) => {
       const echo = randomUUID();
       const timer = setTimeout(() => { this.pending.delete(echo); reject(new Error('QQ 请求超时，发送状态可能不明')); }, 20000);
       this.pending.set(echo, { resolve, reject, timer });
       this.socket.send(JSON.stringify({ action, params, echo }));
+    }).then(result => {
+      if (['send_private_msg', 'send_group_msg'].includes(action)) {
+        const kind = action === 'send_group_msg' ? 'group' : 'private';
+        const text = Array.isArray(params.message) ? params.message.map(m => m.type === 'text' ? m.data.text : `[${m.type}]`).join('') : '';
+        this.onSent?.(kind, params[kind === 'group' ? 'group_id' : 'user_id'], result, text);
+      }
+      return result;
     });
   }
   send(kind, target, text, options = {}) {
