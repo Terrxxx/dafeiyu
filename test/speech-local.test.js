@@ -3,10 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { ROOT } from '../src/config.js';
+import voiceLibrary from '../src/voices.cjs';
+let voiceInstalled = true;
+try { voiceLibrary.voiceConfig('chaowen'); } catch { voiceInstalled = false; }
 import { synthesizeSpeech } from '../src/media.js';
 
-test('本地音色真正合成非静音PCM，完成后清理临时音频', { skip: !fs.existsSync(path.join(ROOT, 'data/tts/vits-piper-zh_CN-chaowen-medium-int8/zh_CN-chaowen-medium.onnx')) }, async () => {
+test('本地音色真正合成非静音PCM，完成后清理临时音频', { skip: !voiceInstalled }, async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'fish-voice-'));
   try {
     const wav = await synthesizeSpeech('你好，大肥鱼。', directory, 'chaowen');
@@ -22,3 +24,4 @@ test('本地音色真正合成非静音PCM，完成后清理临时音频', { ski
     assert.deepEqual(fs.readdirSync(directory), []);
   } finally { fs.rmdirSync(directory); }
 });
+

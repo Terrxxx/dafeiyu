@@ -1,0 +1,25 @@
+services:
+  napcat:
+    image: ghcr.io/napneko/nodenapcat@sha256:fa4f3cda11e79e3d5c0d8d271565ed4b12e79826ee04b78982484e49348841b7
+    container_name: dafeiyu-napcat
+    hostname: dafeiyu-qq
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      NAPCAT_UID: "993"
+      NAPCAT_GID: "978"
+    ports:
+      - "127.0.0.1:3001:3001"
+      - "127.0.0.1:16099:6099"
+    volumes:
+      - ./napcat/qq:/app/.config/QQ
+      - ./napcat/qq:/root/.config/QQ
+      - ./napcat/config:/app/napcat/config
+      - ./napcat/plugins:/app/napcat/plugins
+      - ./napcat/logs:/app/napcat/logs
+      - ./data/media:/opt/dafeiyu/data/media:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"

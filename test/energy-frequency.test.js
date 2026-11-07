@@ -37,7 +37,7 @@ test('按聊天发生时间分段结算，工具事件不会叠加突破每小�
   for (let i = 0; i < 100; i++) f.feelings.event(`activity:${i}`, { energy: -8, joy: 0.1 }, 'test');
   f.set('2026-10-26T13:00:00+08:00'); f.sleep.tick(); close(f.feelings.data.mood.energy, 93.5);
 });
-test('低于5有概率提前犯困，0耗尽必须锁到次日8点，即使100也不能提前醒', t => {
+test('10%有极大概率提前睡，0耗尽必须锁到次日8点，即使100也不能提前醒', t => {
   const drowsy = fixture(t, 4, () => 0.6);
   assert.equal(drowsy.sleep.sleeping(), true); assert.equal(drowsy.sleep.data.reason, 'drowsy');
   const awake = fixture(t, 4, () => 0.99); assert.equal(awake.sleep.sleeping(), false);
@@ -46,10 +46,10 @@ test('低于5有概率提前犯困，0耗尽必须锁到次日8点，即使100�
   awake.set('2026-10-26T23:59:00+08:00'); assert.equal(awake.sleep.sleeping(), true); close(awake.feelings.data.mood.energy, 100);
   const restored = new Sleep(new Store(path.dirname(awake.store.file)), awake.feelings, awake.now, () => 0.99);
   awake.set('2026-10-27T07:59:59+08:00'); assert.equal(restored.sleeping(), true);
-  awake.set('2026-10-27T08:00:00+08:00'); assert.equal(restored.sleeping(), false); close(awake.feelings.data.mood.energy, 100);
+  awake.set(new Date(restored.data.minWakeAt).toISOString()); assert.equal(restored.sleeping(), false); close(awake.feelings.data.mood.energy, 100);
 });
 test('活跃聊天睡前先告别，然后进入睡眠；无聊天不打扰，事后不补发告别', async t => {
-  const f = fixture(t, 10); const sends = [];
+  const f = fixture(t, 20); const sends = [];
   const qq = { send: async (kind, target, text) => {
     assert.equal(f.sleep.data.mode, 'awake'); sends.push({ kind, target, text }); return { message_id: 2 };
   } };
@@ -57,6 +57,7 @@ test('活跃聊天睡前先告别，然后进入睡眠；无聊天不打扰，�
   installSleepFarewell({ tools, store: f.store, qq, log() {}, now: f.now });
   f.sleep.observeIncoming({ kind: 'private', target: '2' });
   f.sleep.recordOutgoing('private', '2', { message_id: 1 });
+  f.sleep.markReply('private', '2');
   f.feelings.data.mood.energy = 0;
   assert.equal(f.sleep.sleeping(), true);
   await setImmediate();

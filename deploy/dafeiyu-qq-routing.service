@@ -1,0 +1,12 @@
+[Unit]
+Description=Dafeiyu QQ-only source routing and anti-leak rules
+Requires=docker.service dafeiyu-qq-tun.service
+After=docker.service dafeiyu-qq-tun.service
+PartOf=docker.service
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/dafeiyu-qq-egress watch
+Restart=always
+RestartSec=3
+[Install]
+WantedBy=multi-user.target docker.service

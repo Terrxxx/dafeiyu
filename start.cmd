@@ -1,5 +1,6 @@
 @echo off
-cd /d "%~dp0"
-if not exist .env copy .env.example .env >nul
-node --env-file-if-exists=.env src/launcher.js
+chcp 65001 >nul
+ echo 大肥鱼已迁移到服务器，多用户服务由服务器自动运行。
+ echo 请在浏览器手动打开：http://192.168.1.149:3081/
+ echo 不会启动旧的单账号后台，也不会自动打开网页。
 pause

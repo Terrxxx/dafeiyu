@@ -1,7 +1,9 @@
+import{QQPeers}from'./qq-peers.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { ROOT } from './config.js';
+import { DATA_ROOT } from './config.js';
+import { decodeVideoFrames } from './video-frames.js';
 
 export const HEADERS = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36', Referer: 'https://www.bilibili.com/' };
 const plain = value => String(value || '').replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').slice(0, 1500);
@@ -23,7 +25,7 @@ export function signWbi(params, key, time = Math.floor(Date.now() / 1000)) {
 }
 export function readCookie() {
   if (process.env.BILIBILI_COOKIE) return process.env.BILIBILI_COOKIE;
-  const file = path.join(ROOT, 'data', 'bilibili-auth.json');
+  const file = path.join(DATA_ROOT, 'bilibili-auth.json');
   return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')).cookie : '';
 }
 export function parseMention(event) {
@@ -44,7 +46,7 @@ export function parseMention(event) {
 }
 
 export class Bilibili {
-  constructor(cookie, request = fetch) { this.cookie = cookie; this.request = request; this.key = ''; this.keyTime = 0; }
+  constructor(cookie, request = fetch) { this.cookie = cookie; this.request = request;this.peers=new QQPeers(); this.key = ''; this.keyTime = 0; }
   async api(endpoint, params = {}, post = false, signed = false, json = false) {
     if (signed && Date.now() - this.keyTime > 3600000) {
       const nav = await this.api('/x/web-interface/nav');
@@ -92,6 +94,14 @@ export class Bilibili {
     if (!Array.isArray(data?.list)) throw new Error('关注列表结构变化');
     return { private: true, page, total: data.total, items: data.list.slice(0, 20).map(x => ({ uid: String(x.mid), name: plain(x.uname), description: plain(x.sign) })) };
   }
+  async ownFans(page=1){if(!Number.isInteger(page)||page<1||page>100)throw Error('粉丝页码无效');const mid=await this.ownId();const data=await this.api('/x/relation/followers',{vmid:mid,pn:page,ps:20,order:'desc'});if(!Array.isArray(data?.list))throw Error('粉丝列表结构变化');return {private:true,page,total:data.total,items:data.list.map(x=>({uid:String(x.mid),name:plain(x.uname)}))};}
+  async notices(type){if(!['at','reply','like'].includes(type))throw Error('通知类型无效');const self=await this.ownId();const data=await this.api('/x/msgfeed/'+type,{platform:'web'});const noticeItems=type==='like'?[...(data.latest?.items||[]),...(data.total?.items||[])]:data?.items;if(!Array.isArray(noticeItems))throw Error('站内通知结构变化');this.noticeRecords||=new Map();return {private:true,type,items:noticeItems.filter(event=>String(event.user?.mid)!==self&&!this.peers.isBiliPeer(event.user?.mid)).slice(0,20).map(event=>{const ref=type+':'+event.id;this.noticeRecords.set(ref,event);return {ref,type,time:event.at_time||event.reply_time||event.like_time,text:plain(event.item?.source_content||event.item?.title||event.item?.description||''),replySupported:type!=='like'&&(!!parseMention(event)||type==='reply'&&[1,11,12,17].includes(Number(event.item?.business_id))&&/^[1-9]\d*$/.test(String(event.item?.source_id)))};})};}
+  async imApi(endpoint,params={},post=false){if(!['/session_svr/v1/session_svr/get_sessions','/svr_sync/v1/svr_sync/fetch_session_msgs','/web_im/v1/web_im/send_msg'].includes(endpoint))throw Error('不支持的私信接口');if(Date.now()-this.keyTime>3600000){const nav=await this.api('/x/web-interface/nav');const key=url=>new URL(url).pathname.split('/').pop().split('.')[0];this.key=key(nav.wbi_img.img_url)+key(nav.wbi_img.sub_url);this.keyTime=Date.now();}const csrf=this.cookie.split(';').map(x=>x.trim()).find(x=>x.startsWith('bili_jct='))?.slice(9);if(post&&!csrf)throw Error('B站登录凭据不完整');const query=signWbi(post?params.query||{}:{...params,build:0,mobi_app:'web'},this.key);this.beforeRequest?.();const response=await this.request('https://api.vc.bilibili.com'+endpoint+'?'+query,{method:post?'POST':'GET',headers:{...HEADERS,Cookie:this.cookie,...(post?{'Content-Type':'application/x-www-form-urlencoded'}:{})},body:post?new URLSearchParams({...params.body,csrf,csrf_token:csrf}):undefined,redirect:'error',signal:AbortSignal.timeout(20000)});if(!response.ok)throw Error('B站私信接口不可用');const value=await response.json();if(value.code!==0)throw Error('B站私信接口返回错误码 '+value.code);return value.data;}
+  async dmSessions(){const own=await this.ownId();const data=await this.imApi('/session_svr/v1/session_svr/get_sessions',{session_type:1,group_fold:1,unfollow_fold:0,sort_rule:2,size:20});if(!Array.isArray(data?.session_list))throw Error('私信列表结构变化');return {private:true,items:data.session_list.filter(x=>Number(x.session_type)===1&&!this.peers.isBiliPeer(x.talker_id)).slice(0,20).map(x=>({peer:String(x.talker_id),lastMessageId:String(x.last_msg?.msg_key||''),lastSender:String(x.last_msg?.sender_uid||''),time:x.last_msg?.timestamp,unread:x.unread_count||0,own}))};}
+  async dmMessages(peer){if(!/^[1-9]\d*$/.test(String(peer)))throw Error('私信对象无效');const sessions=await this.dmSessions();if(!sessions.items.some(x=>x.peer===String(peer)))throw Error('只读取当前账号已有私信会话');const data=await this.imApi('/svr_sync/v1/svr_sync/fetch_session_msgs',{talker_id:peer,session_type:1,size:20});if(!Array.isArray(data?.messages))throw Error('私信消息结构变化');this.dmReadMessages||=new Map();const items=data.messages.slice(0,20).map(m=>{let text='';try{text=plain(JSON.parse(m.content).content||'');}catch{}const item={id:String(m.msg_key),sender:String(m.sender_uid),text:text.slice(0,4000),time:m.timestamp,type:Number(m.msg_type)};this.dmReadMessages.set(String(peer)+':'+item.id,item);return item;});return {private:true,peer:String(peer),items};}
+  async replyDM(peer,text,messageId){if(this.peers.isBiliPeer(peer))throw Error('不向本站同类大肥鱼发送私信');const source=this.dmReadMessages?.get(String(peer)+':'+String(messageId));if(!source||source.sender!==String(peer)||source.type!==1)throw Error('只能回复本轮实际读取的对方文字私信');if(typeof text!=='string'||!text.trim()||text.length>500)throw Error('私信须为1至500字');const me=await this.ownId(),dev=crypto.randomUUID();const msg={sender_uid:me,receiver_id:String(peer),receiver_type:1,msg_type:1,msg_status:0,content:JSON.stringify({content:text.trim()}),timestamp:Math.floor(Date.now()/1000),dev_id:dev};const body=Object.fromEntries(Object.entries(msg).map(([k,v])=>['msg['+k+']',v]));const data=await this.imApi('/web_im/v1/web_im/send_msg',{query:{w_sender_uid:me,w_receiver_id:peer,w_dev_id:dev},body:{...body,from_firework:0,build:0,mobi_app:'web'}},true);if(!data?.msg_key)throw Error('未取得私信发送凭据，结果未确认');return {accepted:true,messageId:String(data.msg_key)};}
+  async verifyNotice(ref){const event=this.noticeRecords?.get(ref);if(!event||ref.startsWith('like:'))throw Error('通知未读取或不支持回复');if(String(event.user?.mid)===await this.ownId())throw Error('不能回复自己发表的B站评论');const old=parseMention(event);if(old){const video=await this.video(old.bvid);return {type:1,oid:video.aid,...await this.verifyThread(old,video.aid)};}const item=event.item||{},type=Number(item.business_id),oid=String(item.subject_id),parent=String(item.source_id),root=String(item.root_id&&String(item.root_id)!=='0'?item.root_id:parent),sender=String(event.user?.mid);if(!ref.startsWith('reply:')||![1,11,12,17].includes(type)||![oid,parent,root,sender].every(x=>/^[1-9]\d*$/.test(x)))throw Error('通知缺少可核验的评论定位');for(let pn=1;pn<=3;pn++){const data=await this.api('/x/v2/reply/reply',{type,oid,root,pn,ps:20});const row=[data.root,...(data.replies||[])].filter(Boolean).find(x=>String(x.rpid_str||x.rpid)===parent);if(row){if(String(row.mid||row.member?.mid)!==sender||String(row.oid)!==oid)throw Error('通知评论身份不一致');return {type,oid,parent,root,text:plain(row.content?.message)};}if((data.replies||[]).length<20)break;}throw Error('原评论楼层无法核验，不回复');}
+  async replyNotice(ref,text){if(typeof text!=='string'||!text.trim()||text.length>500)throw Error('评论回复须为1至500字');const thread=await this.verifyNotice(ref);if(thread.type===1)return this.comment(thread.oid,text,thread.root,thread.parent);const result=await this.api('/x/v2/reply/add',{type:thread.type,oid:thread.oid,message:text,root:thread.root,parent:thread.parent,plat:1},true);if(result?.need_captcha||!(result?.rpid_str||result?.rpid))throw Error('评论回复未确认成功');return {accepted:true,rpid:String(result.rpid_str||result.rpid)};}
   async ownFolders() {
     const mid = await this.ownId();
     const data = await this.api('/x/v3/fav/folder/created/list-all', { up_mid: mid });
@@ -144,7 +154,7 @@ export class Bilibili {
   async video(bvid) {
     if (!/^BV[0-9A-Za-z]{10}$/.test(bvid)) throw new Error('无效 BV 号');
     const info = await this.api('/x/web-interface/view', { bvid });
-    const result = { ...videoSummary({ ...info, bvid }), aid: info.aid, description: String(info.desc || '').slice(0, 3000), subtitle: '', evidence: '仅标题和简介；未看到画面。字幕仅取第1分P。' };
+    const result = { ...videoSummary({ ...info, bvid }), aid: info.aid, cid:info.cid, description: String(info.desc || '').slice(0, 3000), subtitle: '', evidence: '文字资料仅标题和简介，字幕仅取第1分P；画面由独立关键帧字段提供。' };
     try {
       const player = await this.api('/x/player/wbi/v2', { bvid, cid: info.cid }, false, true);
       const subs = player.subtitle?.subtitles || [];
@@ -156,14 +166,21 @@ export class Bilibili {
         if (!response.ok) throw new Error('字幕下载失败');
         const subtitle = await response.json();
         result.subtitle = (subtitle.body || []).map(x => `[${Math.floor(x.from / 60)}:${String(Math.floor(x.from % 60)).padStart(2, '0')}] ${x.content}`).join('\n').slice(0, 16000);
-        result.evidence = '第1分P字幕文本，未看到画面；最多16000字符。';
+        result.evidence = '已读取第1分P字幕文本，最多16000字符；画面能力以关键帧字段为准。';
       }
-    } catch { result.evidence = '字幕获取失败；仅标题和简介，不能声称看完视频。'; }
+    } catch { result.evidence = '字幕获取失败，文字仅有标题和简介；画面能力以关键帧字段为准。'; }
     try {
       await this.api('/x/v2/history/report', { aid: info.aid, cid: info.cid, progress: 0, platform: 'android' }, true);
       result.historyRecorded = true;
     } catch (error) { result.historyRecorded = false; result.historyError = error.message; }
     return result;
+  }
+  async videoFrames(bvid,video,count=4){
+    validBvid(bvid);if(!/^[1-9]\d*$/.test(String(video.aid))||!/^[1-9]\d*$/.test(String(video.cid)))throw Error('视频缺少有效aid/cid，无法取得画面');
+    this.frameCache||=new Map();const key=`${bvid}:${video.cid}:${count}`,cached=this.frameCache.get(key);if(cached&&Date.now()-cached.at<15*60000){this.beforeRequest?.();return cached.frames;}
+    const data=await this.api('/x/player/videoshot',{aid:video.aid,cid:video.cid,index:1});
+    const frames=await decodeVideoFrames(data,count,this.request,()=>this.beforeRequest?.());if(!frames.length)throw Error('视频没有可用关键帧');
+    this.frameCache.set(key,{at:Date.now(),frames});if(this.frameCache.size>20)this.frameCache.delete(this.frameCache.keys().next().value);return frames;
   }
   async mentions() {
     const items = []; let params = { platform: 'web' };
@@ -174,9 +191,10 @@ export class Bilibili {
       if (!data.items.length || data.cursor?.is_end || !data.cursor?.id) break;
       params = { platform: 'web', id: data.cursor.id, at_time: data.cursor.time };
     }
-    return items;
+    const self=await this.ownId();return items.filter(event=>String(event.user?.mid)!==self&&!this.peers.isBiliPeer(event.user?.mid));
   }
   async verifyThread(mention, aid) {
+    if(String(mention.sender)===await this.ownId())throw new Error('不能回复自己发表的B站评论');
     for (let pn = 1; pn <= 5; pn++) {
       const data = await this.api('/x/v2/reply/reply', { type: 1, oid: aid, root: mention.root, pn, ps: 20 });
       const replies = [data.root, ...(data.replies || [])].filter(Boolean);
@@ -191,9 +209,27 @@ export class Bilibili {
     throw new Error('无法核验评论楼层，已跳过，避免回复错人');
   }
   async comment(aid, message, root = '0', parent = '0') {
+    if(String(parent)!=='0'||String(root)!=='0')await this.verifyReplyTarget(1,aid,root,parent);
     const data = await this.api('/x/v2/reply/add', { type: 1, oid: aid, message: message.slice(0, 900), root, parent, plat: 1 }, true);
     if (data?.need_captcha || !(data?.rpid_str || data?.rpid)) throw new Error('评论未确认成功，可能需要验证码');
     return { rpid: String(data.rpid_str || data.rpid) };
+  }
+  async verifyReplyTarget(type,oid,root,parent){
+    const target=String(parent)==='0'?String(root):String(parent);
+    if(![type,oid,root,parent].every(x=>/^\d+$/.test(String(x)))||target==='0')throw new Error('回复楼层无效，未回复');
+    const self=await this.ownId();
+    for(let pn=1;pn<=5;pn++){
+      const data=await this.api('/x/v2/reply/reply',{type,oid,root:String(root)==='0'?target:root,pn,ps:20});
+      const row=[data.root,...(data.replies||[])].filter(Boolean).find(r=>String(r.rpid_str||r.rpid)===target);
+      if(row){
+        const author=String(row.mid??row.member?.mid);
+        if(!/^[1-9]\d*$/.test(author)||String(row.oid)!==String(oid))throw new Error('无法核验原评论作者，未回复');
+        if(author===String(self))throw new Error('不能回复自己发表的B站评论');
+        return;
+      }
+      if((data.replies||[]).length<20)break;
+    }
+    throw new Error('无法核验原评论楼层，未回复');
   }
   async like(bvid) {
     if (!/^BV[0-9A-Za-z]{10}$/.test(bvid)) throw new Error('无效BV号');
@@ -228,15 +264,29 @@ export class Bilibili {
     await this.api('/x/v3/fav/resource/deal', { rid: video.aid, type: 2, add_media_ids: String(folderId), del_media_ids: '' }, true);
     return { favorited: true, bvid, folderId: String(folderId) };
   }
-  async publishDynamic(text) {
+  async uploadDynamicImage(image){
+    if(!Buffer.isBuffer(image.bytes)||!image.bytes.length||image.bytes.length>8*1024*1024||!['image/png','image/jpeg','image/gif'].includes(image.mime))throw Error('B站动态图片支持8MB内的PNG、JPEG或GIF');
+    const csrf=this.cookie.split(';').map(x=>x.trim()).find(x=>x.startsWith('bili_jct='))?.slice(9);if(!csrf)throw Error('B站Cookie缺少bili_jct');
+    const form=new FormData();form.set('file_up',new Blob([image.bytes],{type:image.mime}),'image.'+({'image/png':'png','image/jpeg':'jpg','image/gif':'gif'})[image.mime]);form.set('category','daily');form.set('biz','new_dyn');form.set('csrf',csrf);
+    this.beforeRequest?.();
+    const response=await this.request('https://api.bilibili.com/x/dynamic/feed/draw/upload_bfs',{method:'POST',headers:{...HEADERS,Cookie:this.cookie},body:form,redirect:'error',signal:AbortSignal.timeout(30000)});
+    if(!response.ok)throw Error('B站图片上传失败 HTTP '+response.status);
+    const result=await response.json();if(result.code!==0)throw Error('B站图片上传返回错误码 '+result.code);
+    const data=result.data||{};let url;try{url=new URL(data.image_url);if(url.protocol==='http:')url.protocol='https:';}catch{throw Error('图片上传没有返回有效地址');}
+    if(url.protocol!=='https:'||url.username||url.password||!url.hostname.endsWith('.hdslb.com')||![data.image_width,data.image_height].every(n=>Number.isInteger(n)&&n>0))throw Error('B站图片上传回执无效');
+    return{img_src:url.href,img_width:data.image_width,img_height:data.image_height,img_size:image.bytes.length/1024};
+  }
+  async publishDynamic(text,images=[]) {
     if (typeof text !== 'string' || !text.trim() || text.length > 1000) throw new Error('动态须为1至1000字');
+    if(!Array.isArray(images)||images.length>9)throw Error('动态最多9张图片');
     await this.ensureDevice();
+    const pics=[];for(const image of images)pics.push(await this.uploadDynamicImage(image));
     const data = await this.api('/x/dynamic/feed/create/dyn', { dyn_req: {
-      scene: 1, content: { contents: [{ raw_text: text.trim(), type: 1, biz_id: '' }] },
+      scene: pics.length?2:1,...(pics.length?{pics}:{}),content: { contents: [{ raw_text: text.trim(), type: 1, biz_id: '' }] },
       meta: { app_meta: { from: 'create.dynamic.web', mobi_app: 'web' } },
     } }, true, false, true);
     const id = data?.dyn_id_str || (Number.isSafeInteger(data?.dyn_id) ? String(data.dyn_id) : '');
     if (!/^[1-9]\d*$/.test(id)) throw new Error('动态发布未取得有效ID，结果不确定');
-    return { dynamicId: id, url: `https://t.bilibili.com/${id}` };
+    return { dynamicId: id, url: `https://t.bilibili.com/${id}`,...(images.length?{imageCount:images.length}:{}) };
   }
 }

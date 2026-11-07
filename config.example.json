@@ -5,7 +5,8 @@
     "cooldownSeconds": 15,
     "mergeSeconds": 8,
     "maxWaitSeconds": 25,
-    "adminUsers": []
+    "adminUsers": [],
+    "voiceEnabled": false
   },
   "bilibili": {
     "enabled": true,
@@ -15,16 +16,20 @@
     "pollSeconds": 90,
     "browseMinutes": 30,
     "maxVideosPerRound": 3,
-    "maxDynamicsPerHour": 1
+    "maxDynamicsPerHour": 1,
+    "readFansEnabled": true,
+    "readFollowingEnabled": true,
+    "readInboxEnabled": true,
+    "replyInboxEnabled": true
   },
   "agent": {
-    "maxToolRounds": 6,
+    "maxToolRounds": 16,
     "maxOutputTokens": 1200,
     "historyMessages": 64,
     "maxModelCallsPerHour": 60,
-    "maxOutgoingPerHour": 20,
+    "maxOutgoingPerHour": 10000,
     "maxBiliCommentsPerHour": 3,
-    "contextMaxChars": 24000
+    "contextMaxChars": 2400
   },
   "social": {
     "enabled": true,
@@ -39,6 +44,7 @@
     "qzoneVisibility": 1,
     "maxQzonePostsPerHour": 1
   },
+  "components": {},
   "runtime": "harness",
   "logging": {
     "replySummary": true
@@ -46,6 +52,22 @@
   "web": {
     "enabled": true,
     "port": 3081,
-    "openBrowser": true
+    "openBrowser": false
+  },
+  "weather": {
+    "enabled": true,
+    "city": "深圳",
+    "countryCode": "CN",
+    "refreshMinutes": 30,
+    "region": "广东"
+  },
+  "life": {
+    "editingEnabled": false
+  },
+  "limits": {
+    "tokenEnabled": true,
+    "tokensPerDay": 10000000,
+    "costEnabled": false,
+    "cnyPerDay": 5
   }
 }

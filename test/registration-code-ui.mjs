@@ -1,0 +1,45 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+import { chromium } from 'playwright-core';
+import { startManager } from '../manager/server.js';
+import { SiteSettings } from '../manager/site-settings.js';
+import { passwordHash } from '../manager/accounts.js';
+
+const root=fs.mkdtempSync(path.join(os.tmpdir(),'dfy-register-ui-')),sent=[];
+const manager=await startManager({dataRoot:root,port:0,origins:[],runtime:async()=>({phase:'stopped'}),mailerFactory:()=>({verify:async()=>{},sendMail:async mail=>{sent.push(mail);return{accepted:[mail.to]};},close(){}})});
+const browser=await chromium.launch({executablePath:'/usr/bin/chromium',headless:true,args:['--no-sandbox']});
+try{
+  manager.registrationCodes.captchaCode=()=> '12345';
+  manager.accounts.db.prepare('INSERT INTO users(username,password,role,created,email,email_verified) VALUES(?,?,?,?,?,1)').run('owner',await passwordHash('owner-password-123'),'admin',Date.now(),'owner@example.test');
+  const site=new SiteSettings(manager.accounts);
+  site.save({...site.safe(),registrationMode:'open',smtp:{host:'smtp.example.test',port:465,encryption:'tls',from:'sender@example.test'}},'owner');
+  const page=await browser.newPage({viewport:{width:390,height:844}}),errors=[];
+  page.on('pageerror',e=>errors.push(e.message));
+  const base='http://127.0.0.1:'+manager.server.address().port;
+  await page.goto(base+'/register');
+  await page.getByLabel('用户名',{exact:true}).fill('newfish');
+  await page.getByRole('button',{name:'下一步',exact:true}).click();
+  await page.getByLabel('邮箱',{exact:true}).fill('newfish@example.test');
+  await page.getByRole('button',{name:'下一步',exact:true}).click();
+  await page.getByRole('dialog',{name:'人机验证'}).waitFor();
+  assert.ok(await page.locator('.captcha-dialog img').evaluate(image=>image.complete&&image.naturalWidth>0));
+  assert.equal(await page.getByLabel('设置密码',{exact:true}).count(),0);
+  await page.getByLabel('图片中的字符').fill('12345');
+  await page.getByRole('button',{name:'发送邮箱验证码'}).click();
+  await page.getByLabel('邮箱验证码',{exact:true}).waitFor();
+  assert.equal(await page.getByLabel('设置密码',{exact:true}).count(),0);
+  assert.equal(sent.length,1);
+  await page.getByLabel('邮箱验证码',{exact:true}).fill(sent[0].text.match(/注册验证码为：(\d{6})/)[1]);
+  await page.getByRole('button',{name:'下一步',exact:true}).click();
+  await page.getByLabel('设置密码',{exact:true}).fill('registration-password-123');
+  await page.getByRole('button',{name:'下一步',exact:true}).click();
+  await page.getByLabel('确认密码',{exact:true}).fill('registration-password-123');
+  await page.getByRole('button',{name:'创建账号',exact:true}).click();
+  await page.waitForURL(base+'/account');
+  assert.equal(manager.accounts.user('newfish').email_verified,1);
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  assert.deepEqual(errors,[]);
+  console.log('registration-ui-ok');
+}finally{await browser.close();await manager.close();fs.rmSync(root,{recursive:true,force:true});}

@@ -21,8 +21,8 @@ export class BrowserSearch {
   constructor(executablePath = '') { this.executablePath = executablePath; }
   async page(work) {
     this.beforeRequest?.();
-    const executablePath = this.executablePath || ['C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', 'C:/Program Files/Google/Chrome/Application/chrome.exe'].find(x => fs.existsSync(x));
-    if (!executablePath) throw new Error('未找到Edge/Chrome，请配置浏览器路径');
+    const executablePath = this.executablePath || ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', 'C:/Program Files/Google/Chrome/Application/chrome.exe'].find(x => fs.existsSync(x));
+    if (!executablePath) throw new Error('服务器未安装受支持的浏览器，请联系站点管理员');
     const browser = await chromium.launch({ executablePath, headless: true });
     try {
       const context = await browser.newContext({ acceptDownloads: false, serviceWorkers: 'block', javaScriptEnabled: false });

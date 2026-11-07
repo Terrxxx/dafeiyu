@@ -1,7 +1,9 @@
+import{syncMediaControls}from'./storage.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { archiveMemory, memoryEntry } from './memory-maintenance.js';
 import { atomicWriteFile } from './atomic-file.js';
+import { syncUserControls, userBlocked } from './user-controls.js';
 
 export class Store {
   constructor(directory, writeOptions = {}) {
@@ -12,6 +14,8 @@ export class Store {
     this.data = fs.existsSync(this.file) ? JSON.parse(fs.readFileSync(this.file, 'utf8')) : { histories: {}, actions: {}, counters: [], meta: {} };
   }
   save() {
+    syncMediaControls(this);
+    syncUserControls(this);
     try {
       atomicWriteFile(this.file, JSON.stringify(this.data, null, 2), this.writeOptions);
       if (this.recoveryFile) { try { fs.unlinkSync(this.recoveryFile); } catch {} this.recoveryFile = null; }
@@ -83,6 +87,9 @@ export class Store {
     this.save();
   }
   context(key, limit = 64, maxChars = 24000, skipLast = false) {
+    syncUserControls(this);
+    const privateId = key.match(/^qq:user:(\d+)$/)?.[1];
+    if (privateId && userBlocked(this, privateId)) return [];
     const history = this.data.histories[key] || [];
     const end = skipLast ? Math.max(0, history.length - 1) : history.length;
     // Evict a block at a time: a one-message sliding window changes the prompt prefix on
@@ -97,10 +104,16 @@ export class Store {
     for (let i = selected.length - 1; i >= 0 && remaining > 0; i--) {
       const item = selected[i];
       if (!['user', 'assistant'].includes(item.role) || typeof item.content !== 'string') continue;
-      const content = item.content.slice(-remaining);
-      result.unshift({ role: item.role, content }); remaining -= content.length;
+      const raw=item.content.includes('程序核验的本批发送者身份：')&&item.content.includes('\n消息：')?item.content.slice(item.content.indexOf('\n消息：')+4):item.content;
+      const content = raw.slice(-remaining);
+        const record = { role: item.role, content };
+        Object.defineProperty(record, 'recordedAt', { value: item.time, enumerable: false });
+        result.unshift(record); remaining -= content.length;
     }
-    return prefix ? [{ role: 'user', content: prefix }, ...result] : result;
+    if (!prefix) return result;
+    const summaryRecord = { role: 'user', content: prefix };
+    Object.defineProperty(summaryRecord, 'historyKind', { value: 'sleep-summary', enumerable: false });
+    return [summaryRecord, ...result];
   }
 }
 

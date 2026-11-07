@@ -153,6 +153,8 @@ test('mention parser excludes non-video and preserves nested root', () => {
 test('Bili posting preserves CSRF and correct thread; captcha is failure', async () => {
   let captured;
   const bili = new Bilibili('SESSDATA=a; bili_jct=csrf123', async (url, options) => {
+    if(new URL(url).pathname==='/x/web-interface/nav')return Response.json({code:0,data:{isLogin:true,mid:1}});
+    if(new URL(url).pathname==='/x/v2/reply/reply')return Response.json({code:0,data:{root:{rpid:88,oid:10,mid:1},replies:[{rpid:99,oid:10,mid:2}]}});
     captured = { url, options }; return { ok: true, json: async () => ({ code: 0, data: { rpid_str: '42' } }) };
   });
   assert.deepEqual(await bili.comment(10, 'hello', '88', '99'), { rpid: '42' });
@@ -164,6 +166,7 @@ test('Bili posting preserves CSRF and correct thread; captcha is failure', async
 });
 test('thread verification rejects wrong sender before any posting', async () => {
   const bili = new Bilibili(''); bili.api = async () => ({ root: { rpid: 88, oid: 10, mid: 999, root: 0 } });
+  bili.ownId=async()=> '1';
   await assert.rejects(bili.verifyThread({ parent: '88', root: '88', sender: '2' }, 10));
 });
 test('WBI signing matches published test vector', () => {

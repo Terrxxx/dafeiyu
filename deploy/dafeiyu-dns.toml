@@ -1,0 +1,21 @@
+server_names = ['dafeiyu-alidns']
+listen_addresses = ['198.18.78.1:53']
+max_clients = 128
+ipv4_servers = true
+ipv6_servers = false
+dnscrypt_servers = false
+doh_servers = true
+force_tcp = true
+http3 = false
+proxy = 'socks5://127.0.0.1:11080'
+timeout = 6000
+keepalive = 30
+bootstrap_resolvers = []
+ignore_system_dns = true
+netprobe_timeout = 0
+cache = true
+cache_size = 1024
+log_level = 2
+use_syslog = true
+[static.'dafeiyu-alidns']
+stamp = 'sdns://AgAAAAAAAAAACTIyMy41LjUuNSCY49XlNq8pWM0vfxT3BO9KJ20l4zzWXy5l9eTycnwTMAkyMjMuNS41LjUKL2Rucy1xdWVyeQ'

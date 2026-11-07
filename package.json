@@ -8,18 +8,22 @@
   },
   "scripts": {
     "feelings": "node src/feelings-status.js",
-    "start": "node --env-file-if-exists=.env src/launcher.js",
+    "start": "node manager/server.js",
     "doctor": "node --env-file-if-exists=.env src/main.js doctor",
     "login:bili": "node --env-file-if-exists=.env src/login.js",
     "test": "node --test test/*.test.js",
     "once": "node --env-file-if-exists=.env src/main.js once",
     "voice:preview": "node src/voice-preview.js",
     "bili:activity": "node src/bili-activity-status.js",
-    "start:agent": "node --env-file-if-exists=.env src/main.js"
+    "start:agent": "node --env-file-if-exists=.env src/main.js",
+    "start:legacy": "node --env-file-if-exists=.env src/launcher.js",
+    "build:web": "npm --prefix frontend run build",
+    "dev:web": "npm --prefix frontend run dev"
   },
   "dependencies": {
     "cheerio": "1.2.0",
     "json5": "2.2.3",
+    "nodemailer": "10.2.1",
     "playwright-core": "1.64.1",
     "qrcode": "1.5.4",
     "sherpa-onnx-node": "1.13.8"

@@ -1,0 +1,12 @@
+[Unit]
+Description=Dafeiyu QQ native SSH SOCKS exit
+Wants=network-online.target
+After=network-online.target
+[Service]
+User=nas-tunnel
+Group=nas-tunnel
+ExecStart=/usr/bin/ssh -N -T -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=20 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=yes -i /var/lib/nas-tunnel/.ssh/id_ed25519 -D 127.0.0.1:11080 admin@106.52.17.21
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=multi-user.target

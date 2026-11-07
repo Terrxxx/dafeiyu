@@ -1,0 +1,18 @@
+[Unit]
+Description=Dafeiyu tenant container supervisor
+Requires=docker.service
+After=docker.service
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/dafeiyu-node /usr/local/lib/dafeiyu-tenant-helper.mjs
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/dafeiyu/data /run/dafeiyu
+RuntimeDirectory=dafeiyu
+RuntimeDirectoryMode=0750
+[Install]
+WantedBy=multi-user.target

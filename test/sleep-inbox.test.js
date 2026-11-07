@@ -45,7 +45,7 @@ test('仍在睡觉时不读未读，醒后真实回复不被认领记录拦截�
   const tools = new SocialTools(config, store, qq, {});
   tools.sleep = { sleeping: () => asleep, responseMode: () => 'normal', assertAwake() { assert.equal(asleep, false); } };
   const agent = { config, shouldReply: async () => true, run: async (scope, input) => {
-    runs++; assert.match(input, /醒后查看的2条/); return '刚看到，你说';
+    runs++; assert.match(input, /unreadReview=true/); assert.match(input, /unreadCount=2/); return '刚看到，你说';
   } };
   const services = { store, tools, qq, agent, throttle: { wait: async () => {} }, log() {} };
   await reviewSleepUnread(services, handleQQMessage); assert.equal(runs, 0);
@@ -69,8 +69,10 @@ test('梦境本地概率生成，醒后保留真实睡眠过程与梦境；不�
   for (const dreamChance of [0.1, 0.9]) {
     let now = Date.parse('2026-10-26T12:00:00+08:00');
     const store = { data: {}, save() {} }; const feelings = { data: { mood: { energy: 5 } }, settle() {} };
-    const values = [0, 0, 0, dreamChance, 0.5];
+    const values = [0, 0, dreamChance, 0.5];
     const sleep = new Sleep(store, feelings, () => now, () => values.shift() ?? 0.9);
+    // This sequence tests dream randomness, independently of nightly jitter.
+    sleep.bedtime = day => sleep.midnight(day);
     sleep.enter('drowsy', now, 5);
     assert.equal(sleep.sleeping(), true);
     now += 30 * 60000; sleep.tick();

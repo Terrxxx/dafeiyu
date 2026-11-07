@@ -12,6 +12,8 @@ function fixture(iso, energy = 20, random = () => 0) {
   const store = { data: {}, save() {} };
   const feelings = { data: { mood: { energy } }, settle() {} };
   const sleep = new Sleep(store, feelings, () => time, random);
+  // Freeze bedtime in energy-only regression cases; jitter is covered separately.
+  sleep.bedtime = day => sleep.midnight(day);
   return { sleep, store, feelings, set: iso => { time = Date.parse(iso); } };
 }
 const close = (actual, expected) => assert.ok(Math.abs(actual - expected) < 0.0001, `${actual} != ${expected}`);
@@ -37,7 +39,7 @@ test('精力0立刻强制睡，每小时加10，跨重启按时间恢复不重�
   assert.equal(restart.sleeping(), true); close(f.feelings.data.mood.energy, 20);
 });
 test('可选择80后继续睡到100，满精力必须醒；零点高精力没有最短睡眠', () => {
-  const f = fixture('2026-10-26T12:00:00+08:00', 10);
+  const f = fixture('2026-10-26T12:00:00+08:00', 20);
   f.sleep.setWakeEnergy(100); f.feelings.data.mood.energy = 3;
   assert.equal(f.sleep.sleeping(), true);
   f.set('2026-10-26T19:42:00+08:00'); assert.equal(f.sleep.sleeping(), true); close(f.feelings.data.mood.energy, 80);
@@ -48,6 +50,7 @@ test('可选择80后继续睡到100，满精力必须醒；零点高精力没有
 test('低于25概率随精力下降，25正常，0强制睡，不靠消息唤醒', () => {
   const f = fixture('2026-10-26T12:00:00+08:00', 24, () => 0.3);
   assert.equal(f.sleep.responseMode(), 'normal');
+  f.sleep.data.dozeAtEnergy = 0; // Exercise the 5% awake branch below the new sleep threshold.
   f.feelings.data.mood.energy = 6; assert.equal(f.sleep.responseMode(), 'silent');
   f.sleep.random = () => 0.6; assert.equal(f.sleep.responseMode(), 'fog');
   f.feelings.data.mood.energy = 25; assert.equal(f.sleep.responseMode(), 'normal');
@@ -104,5 +107,5 @@ test('脑雾轮次只生成短句，不开放工具；回复发送仍受实际�
   await handleQQMessage({ kind: 'private', session: 'qq:user:1', target: '1', sender: '1', text: '在聊什么', images: [] }, 'fog-message', {
     tools, store, agent, qq: { send: async () => { sends++; return { message_id: 1 }; } }, throttle: { wait: async () => {} }, log() {},
   });
-  assert.equal(runs[0][2], false); assert.match(runs[0][1], /脑雾状态/); assert.equal(sends, 1);
+  assert.equal(runs[0][2], false); assert.match(runs[0][1], /fog=true/); assert.equal(sends, 1);
 });

@@ -53,16 +53,16 @@ test('proactive sends enter recipient context exactly once and failed sends do n
 });
 test('QQ tool reply history stores actual delivered text, not model closing commentary', async t => {
   const store = setup(t);
-  const config = { apiKey: 'test', baseUrl: 'https://example.test', model: 'test', persona: '',
+  const config = { apiKey: 'test', baseUrl: 'https://example.test', model: 'test', persona: '', qq: { enabled: true, adminUsers: ['123'] },
     agent: { historyMessages: 64, contextMaxChars: 24000, maxModelCallsPerHour: 10, maxOutgoingPerHour: 10, maxToolRounds: 3, maxOutputTokens: 100 } };
   const qq = { send: async () => ({ message_id: 1 }) };
   const tools = new SocialTools(config, store, qq, {});
   let calls = 0; const requests = [];
   const agent = new Agent(config, store, tools, async (url, options) => {
     requests.push(JSON.parse(options.body)); calls++;
-    const message = calls === 1 ? { content: '{"users":[]}' } : calls === 2 ? { content: '{"reply":true}' } : calls === 3
+    const message = calls === 1 ? { content: '{"reply":"","capabilities":["qq"]}' } : calls === 2
       ? { tool_calls: [{ id: 'reply', function: { name: 'qq_reply_current', arguments: '{"text":"实际回复"}' } }] }
-      : { content: '已完成发送' };
+      : { content: '{"reply":"已完成发送","summary":"按实际回执完成"}' };
     return { ok: true, json: async () => ({ choices: [{ message }] }) };
   });
   const msg = { session: 'qq:user:123', kind: 'private', target: '123', sender: '123', id: '1', text: '今天聊什么' };
@@ -71,6 +71,6 @@ test('QQ tool reply history stores actual delivered text, not model closing comm
   assert.equal(history.length, 2);
   assert.match(history[0].content, /今天聊什么/);
   assert.equal(history[1].content, '实际回复');
-  assert.equal(requests[2].messages.filter(m => m.role === 'user').length, 1);
+  assert.equal(requests[1].messages.filter(m => m.role === 'user').length, 1);
   assert.ok(!JSON.stringify(history).includes('已完成发送'));
 });

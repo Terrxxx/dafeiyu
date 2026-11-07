@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
+import { consolidateUserMemories } from './user-memory.js';
+import { syncUserControls } from './user-controls.js';
 
 export const memoryDay = time => new Date(new Date(time).getTime() + 8 * 3600000).toISOString().slice(0, 10);
 export function archiveMemory(store, scope, entry) {
@@ -21,6 +23,7 @@ function excerpt(entry) {
 
 // Extractive summaries + lossless gzip archives, entirely local. No model, tools or network.
 export function compactMemories(store, now = Date.now()) {
+  syncUserControls(store);
   const directory = path.join(path.dirname(store.file), 'memory');
   fs.mkdirSync(directory, { recursive: true });
   if (!store.data.memoryArchiveSeeded) {
@@ -31,6 +34,7 @@ export function compactMemories(store, now = Date.now()) {
     }
     store.data.memoryArchiveSeeded = true; store.save();
   }
+  const users = consolidateUserMemories(store, now);
   const summaries = store.data.sleepSummaries ||= {};
   const compacted = store.data.memoryCompaction ||= {};
   let days = 0;
@@ -90,7 +94,7 @@ export function compactMemories(store, now = Date.now()) {
   }
   store.data.sleep.needsCompaction = false;
   store.save();
-  return { days, scopes: Object.keys(summaries).length };
+  return { days, users, scopes: Object.keys(summaries).length };
 }
 
 export function memoryEntry(role, content) {

@@ -17,7 +17,7 @@ test('favorite stickers require inspection and a known target; send a real image
   t.mock.method(globalThis, 'fetch', async () => new Response(Buffer.from('image'), { headers: { 'content-type': 'image/png' } }));
   const tools = new SocialTools({ qq: { enabled: true }, agent: { maxOutgoingPerHour: 10, historyMessages: 64 } }, store, qq, {});
   tools.inspectImage = async data => { assert.match(data, /^data:image\/png;base64,/); return '捂脸笑的猫'; };
-  const current = { kind: 'private', target: '123', key: 'reply:1' };
+  const current = { kind: 'private', target: '123', sender: '123', key: 'reply:1' };
   tools.begin('qq:user:123', current);
   const list = await tools.call('qq_list_stickers', {});
   assert.equal(list.length, 1);
@@ -26,12 +26,12 @@ test('favorite stickers require inspection and a known target; send a real image
   const inspected = await tools.call('qq_inspect_sticker', { id: args.id });
   assert.ok(inspected.imageId);
   assert.equal(tools.media.get(inspected.imageId, 'autonomous-social').savedSticker, true);
-  await assert.rejects(tools.call('qq_send_sticker', { ...args, target: '999' }), /目标/);
+  await assert.rejects(tools.call('qq_send_sticker', { ...args, target: '999' }), /目标|管理员/);
   await tools.call('qq_send_sticker', args);
   assert.equal(sent[0].action, 'send_private_msg');
   assert.deepEqual(sent[0].params.message, [{ type: 'image', data: { file: 'base64://aW1hZ2U=' } }]);
   assert.equal(tools.currentAttempted, true);
-  assert.match(store.context('qq:user:123')[0].content, /捂脸笑的猫/);
+  assert.equal(store.context('qq:user:123')[0].content, '[图片 '+inspected.imageId+']');
   assert.equal(store.data.counters.filter(c => c.kind === 'outgoing').length, 1);
   await assert.rejects(tools.call('qq_send_sticker', args), /本轮/);
   tools.begin('qq:user:123', current);

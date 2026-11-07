@@ -1,0 +1,122 @@
+{
+  "qq": {
+    "read": {
+      "label": "查看空间",
+      "title": "查看了QQ空间"
+    },
+    "read_comments": {
+      "label": "查看空间评论",
+      "title": "查看了空间评论"
+    },
+    "profile": {
+      "label": "查看QQ资料",
+      "title": "查看了用户QQ资料"
+    },
+    "publish": {
+      "label": "发布空间动态",
+      "title": "发布了一条空间动态"
+    },
+    "like": {
+      "label": "点赞空间动态",
+      "title": "点赞了空间动态"
+    },
+    "comment": {
+      "label": "评论空间动态",
+      "title": "评论了空间动态"
+    },
+    "reply": {
+      "label": "回复空间评论",
+      "title": "回复了空间评论"
+    }
+  },
+  "bilibili": {
+    "ownFans": {
+      "label": "查看粉丝",
+      "title": "查看了自己的粉丝"
+    },
+    "ownFollowing": {
+      "label": "查看关注",
+      "title": "查看了自己的关注列表"
+    },
+    "notices": {
+      "label": "查看站内通知",
+      "title": "查看了站内通知"
+    },
+    "dmSessions": {
+      "label": "查看私信会话",
+      "title": "查看了自己的私信会话列表"
+    },
+    "dmMessages": {
+      "label": "读取私信",
+      "title": "读取了对应私信会话"
+    },
+    "replyDM": {
+      "label": "回复私信",
+      "title": "回复了一条私信"
+    },
+    "replyNotice": {
+      "label": "回复通知",
+      "title": "回复了一条站内评论或@通知"
+    },
+    "popular": {
+      "label": "浏览热门列表",
+      "title": "浏览了B站热门列表"
+    },
+    "search": {
+      "label": "搜索视频",
+      "title": "搜索了视频"
+    },
+    "stats": {
+      "label": "查看视频数据",
+      "title": "查看了视频数据"
+    },
+    "related": {
+      "label": "查看相关推荐",
+      "title": "查看了相关推荐"
+    },
+    "comments": {
+      "label": "查看视频评论",
+      "title": "查看了视频评论"
+    },
+    "ownHistory": {
+      "label": "查看观看历史",
+      "title": "查看了自己的观看历史"
+    },
+    "ownFolders": {
+      "label": "查看收藏夹",
+      "title": "查看了自己的收藏夹"
+    },
+    "ownFavorites": {
+      "label": "查看收藏视频",
+      "title": "查看了收藏视频列表"
+    },
+    "mentions": {
+      "label": "查看@提醒",
+      "title": "查看了B站@提醒"
+    },
+    "verifyThread": {
+      "label": "核对评论楼层",
+      "title": "核对了评论上下文"
+    },
+    "follow": {
+      "label": "关注UP主",
+      "title": "关注了一位UP主"
+    },
+    "favorite": {
+      "label": "收藏视频",
+      "title": "收藏了一个视频"
+    },
+    "publishDynamic": {
+      "label": "发布动态",
+      "title": "发布了一条B站动态"
+    },
+    "comment": {
+      "label": "发表评论",
+      "title": "发表了一条视频评论"
+    },
+    "like": {
+      "label": "点赞视频",
+      "title": "点赞了一个视频"
+    }
+  }
+}

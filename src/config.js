@@ -1,15 +1,27 @@
+import{normalizeLimits}from'./daily-budget.js';
+import { normalizeQQPolicy } from './qq-policy.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { normalizeComponents } from './component-catalog.js';
+import { normalizeWeather } from './weather.js';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+export const DATA_ROOT = path.resolve(process.env.DAFEIYU_DATA_DIR || path.join(ROOT, 'data'));
+export const CONFIG_FILE = process.env.DAFEIYU_CONFIG_FILE || path.join(ROOT, 'config.json');
+export const PERSONA_FILE = process.env.DAFEIYU_PERSONA_FILE || path.join(ROOT, 'persona.md');
 export function loadConfig() {
-  const local = path.join(ROOT, 'config.json');
+  const local = CONFIG_FILE;
   if (!fs.existsSync(local)) fs.copyFileSync(path.join(ROOT, 'config.example.json'), local);
   const config = JSON.parse(fs.readFileSync(local, 'utf8').replace(/^\uFEFF/, ''));
   return normalizeConfig(config);
 }
 export function normalizeConfig(config) {
+  config.limits=normalizeLimits(config.limits);config.life={editingEnabled:false,...config.life};if(typeof config.life.editingEnabled!=='boolean')throw Error('情绪编辑开关无效');
+  for(const key of ['readFansEnabled','readFollowingEnabled','readInboxEnabled','replyInboxEnabled']){config.bilibili[key]??=true;if(typeof config.bilibili[key]!=='boolean')throw Error('B站能力开关无效');}
+  config.components = normalizeComponents(config.components || {});
+  config.weather = normalizeWeather(config.weather);
+  normalizeQQPolicy(config.qq);
   config.qq.mergeSeconds ??= 8;
   config.qq.maxWaitSeconds ??= 25;
   config.qq.adminUsers ??= [];
@@ -31,7 +43,7 @@ export function normalizeConfig(config) {
     if (!Number.isSafeInteger(value) || value < 0) throw new Error(`${name} 须为非负整数，0表示禁止发布`);
   }
   config.logging = { replySummary: true, ...config.logging };
-  config.web = { enabled: true, port: 3081, openBrowser: true, ...config.web };
+  config.web = { enabled: true, port: 3081, openBrowser: false, ...config.web };
   if (typeof config.web.enabled !== 'boolean' || typeof config.web.openBrowser !== 'boolean' || !Number.isInteger(config.web.port) || config.web.port < 1024 || config.web.port > 65535) throw new Error('Web面板端口须为1024至65535，开关须为布尔值');
   if (typeof config.logging.replySummary !== 'boolean') throw new Error('logging.replySummary 须为布尔值');
   if (typeof config.social.qzoneAutoReply !== 'boolean' || !Number.isInteger(config.social.qzonePollMinutes) || config.social.qzonePollMinutes < 5) throw new Error('空间自动回复配置无效，检查间隔至少5分钟');
@@ -56,7 +68,7 @@ export function normalizeConfig(config) {
   config.model = process.env.DEEPSEEK_MODEL || 'deepseek-flash';
   config.wsUrl = process.env.NAPCAT_WS_URL || 'ws://127.0.0.1:3001';
   config.wsToken = process.env.NAPCAT_TOKEN || '';
-  config.persona = fs.readFileSync(path.join(ROOT, 'persona.md'), 'utf8');
+  config.persona = fs.readFileSync(PERSONA_FILE, 'utf8');
   return config;
 }
 export const allowed = (list, id) => list.includes('*') || list.includes(String(id));

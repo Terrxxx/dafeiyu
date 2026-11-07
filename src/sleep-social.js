@@ -1,12 +1,13 @@
 export function installSleepFarewell({ tools, store, qq, log, now = Date.now }) {
-  tools.sleep.onBeforeSleep = ({ at, energy, chats }) => {
-    if (energy >= 100 || Math.abs(now() - at) > 60000) return;
+  const send = (chats, cycle, text) => {
+    const targets = tools.sleep.data.farewellTargets ||= {};
+    targets[cycle] ||= [];
     for (const chat of chats) {
-      const key = `sleep-farewell:${at}:${chat.kind}:${chat.target}`;
-      // once() invokes its action synchronously up to the first await; the first send is
-      // admitted before Sleep.enter flips the state. No model call or sleeping exception.
+      const target = `${chat.kind}:${chat.target}`;
+      if (targets[cycle].includes(target) || targets[cycle].length >= 2) continue;
+      targets[cycle].push(target); store.save();
+      const key = `sleep-farewell:${cycle}:${target}`;
       void store.once(key, async () => {
-        const text = '我先睡啦，醒了聊';
         tools.outgoing(false, text);
         const receipt = await qq.send(chat.kind, chat.target, text);
         store.recordSent(chat.kind, chat.target, receipt, text);
@@ -14,6 +15,17 @@ export function installSleepFarewell({ tools, store, qq, log, now = Date.now }) 
         return receipt;
       }).catch(error => log(`睡前告别未确认发送：${error.message}`));
     }
+    for (const key of Object.keys(targets)) if (Number(key) < now() - 2 * 86400000) delete targets[key];
+  };
+  tools.sleep.onWindDown = () => {
+    if (tools.sleep.sleeping()) return;
+    const winding = tools.sleep.windDown();
+    if (winding.active) send(tools.sleep.activeChats(), winding.bedtimeAt, '有点困，准备睡啦');
+  };
+  tools.sleep.onBeforeSleep = ({ at, energy, chats, reason }) => {
+    if (energy >= 100 || Math.abs(now() - at) > 60000) return;
+    const planned = reason === 'midnight' ? tools.sleep.bedtime(tools.sleep.data.nightDay) : at;
+    send(chats, Math.abs(at - planned) <= 60000 ? planned : at, '我先睡啦，醒了聊');
   };
 }
 
@@ -22,7 +34,7 @@ export async function considerWakeGreeting({ tools, store, qq, agent, log, now =
   const rest = tools.sleep.data.lastSleep;
   if (!rest || tools.sleep.data.greetingConsidered === rest.id) return;
   tools.sleep.data.greetingConsidered = rest.id; store.save();
-  if (now() - rest.wokeAt > 2 * 3600000 || rest.durationMinutes < 30) return;
+  if (now() - rest.wokeAt > 30 * 60000 || now() < rest.wokeAt || rest.durationMinutes < 30) return;
   const candidate = [...(rest.chats || [])].sort((a, b) => b.lastOutgoing - a.lastOutgoing).find(chat => {
     if (!['private', 'group'].includes(chat.kind) || !/^[1-9]\d*$/.test(chat.target)) return false;
     if (chat.kind === 'private' && tools.feelings?.data.users[chat.target]?.contactPaused) return false;
@@ -34,12 +46,14 @@ export async function considerWakeGreeting({ tools, store, qq, agent, log, now =
   const session = candidate.kind === 'group' ? `qq:group:${candidate.target}` : `qq:user:${candidate.target}`;
   try {
     const clock = new Date(now()).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
-    const raw = await agent.run(session, `你刚睡醒。北京时间${clock}。这是睡醒后的一次可选问候决定，不是用户新发消息。这里只考虑睡前曾实际互相聊天的当前会话。结合此会话历史、亲疏、是否打扰和当下时间，决定是否发一条短问候，也可不发。早晨可以说早上好，其他时段不要乱说早安。不要透露其他会话的事情，不催人回复。内部决定，不调用工具，严格只返回JSON {"send":false,"text":""}；若想发，send=true，text最多30字，只一条。`, false, { remember: false });
+    const raw = await agent.run(session, `你已醒${Math.floor((now() - rest.wokeAt) / 60000)}分钟。北京时间${clock}。这是睡醒后的一次可选问候决定，不是用户新发消息。这里只考虑睡前曾实际互相聊天的当前会话。结合此会话历史、亲疏、是否打扰和当下时间，决定是否发一条短问候，也可不发。早安/早上好仅05:00–10:59可说；刚醒/刚起床仅醒后15分钟内可说。不要透露其他会话的事情，不催人回复。内部决定，不调用工具，严格只返回JSON {"send":false,"text":""}；若想发，send=true，text最多30字，只一条。`, false, { remember: false });
     const choice = JSON.parse(raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''));
     if (typeof choice.send !== 'boolean') throw new Error('醒后问候判断格式错误');
     if (!choice.send) return;
     if (typeof choice.text !== 'string' || !choice.text.trim() || choice.text.length > 30 || /[\r\n]/.test(choice.text)) throw new Error('醒后问候须为30字内单条消息');
     tools.sleep.assertAwake();
+    const hour = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Shanghai', hour: '2-digit', hourCycle: 'h23' }).format(now()));
+    if (now() - rest.wokeAt > 30 * 60000 || (/早安|早上好|早呀|早啊/.test(choice.text) && (hour < 5 || hour >= 11)) || (/刚.{0,3}(醒|起床)/.test(choice.text) && now() - rest.wokeAt > 15 * 60000)) return;
     await store.once(`wake-greeting:${rest.id}`, async () => {
       tools.outgoing(false, choice.text);
       const receipt = await qq.send(candidate.kind, candidate.target, choice.text);

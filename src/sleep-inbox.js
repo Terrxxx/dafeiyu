@@ -1,14 +1,17 @@
 import { createHash } from 'node:crypto';
 import { mergeMessages } from './message-buffer.js';
+import { acceptedSource } from './user-controls.js';
 
 export function rememberSleepUnread(store, msg, historyLimit = 64) {
   const inbox = store.data.sleepUnread ||= [];
   for (const source of msg.sources || [msg]) {
+    if (!acceptedSource(store, source, msg.receivedAt)) continue;
     const id = String(source.id ?? msg.id);
     const key = `qq-reply:${msg.session}:${id}`;
     if (inbox.some(item => item.session === msg.session && item.id === id)) continue;
     const item = { kind: msg.kind, target: msg.target, session: msg.session, sender: source.sender,
-      name: source.name, id, text: String(source.text || '').slice(0, 6000), mentioned: msg.mentioned,
+      name: source.name,qqNickname:source.qqNickname,groupCard:source.groupCard,id,text:String(source.text||'').slice(0,6000),mentioned:!!source.mentioned,
+      selfId:source.selfId||msg.selfId,atUserIds:source.atUserIds||[],replyId:source.replyId,replyToSelf:!!source.replyToSelf,replyUnresolved:!!source.replyUnresolved,addressedElsewhere:!!source.addressedElsewhere,peerCount:source.peerCount??msg.peerCount,selfNames:source.selfNames||msg.selfNames,selfUniqueNames:source.selfUniqueNames||msg.selfUniqueNames,
       images: (source.images || (id === String(msg.id) ? msg.images : []) || []).slice(0, 3), receivedAt: Date.now() };
     inbox.push(item);
     store.appendHistory(msg.session, 'user', `[睡眠期间收到，待醒后查看] ${item.name || item.sender}：${item.text || '[图片]'}`, historyLimit);
@@ -25,6 +28,7 @@ export function rememberSleepUnread(store, msg, historyLimit = 64) {
 // Called only on the serialized queue after waking. Each context contains a single QQ conversation.
 export async function reviewSleepUnread(services, handleMessage) {
   const { store, tools, log } = services;
+  if (store.data.sleepUnread) store.data.sleepUnread = store.data.sleepUnread.filter(item => acceptedSource(store, item, item.receivedAt));
   if (tools.sleep?.sleeping() || !store.data.sleepUnread?.length) return;
   let reviewed = 0;
   while (reviewed < 99 && store.data.sleepUnread.length && !tools.sleep?.sleeping()) {
@@ -59,6 +63,7 @@ export async function reviewSleepUnread(services, handleMessage) {
         log(`醒后未读消息处理失败：${error.message}`);
       }
     }
+    if (tools.current?.key === key) tools.current = null;
     store.save(); reviewed += batch.length;
   }
   if (reviewed) log(`醒后已查看${reviewed}条QQ未读消息，由AI择要回应`);

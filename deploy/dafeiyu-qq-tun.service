@@ -1,0 +1,13 @@
+[Unit]
+Description=Dafeiyu QQ transparent TCP proxy interface
+Requires=dafeiyu-qq-guard.service
+Wants=dafeiyu-qq-socks.service
+After=dafeiyu-qq-guard.service dafeiyu-qq-socks.service
+[Service]
+Type=simple
+ExecStartPre=/usr/local/sbin/dafeiyu-qq-egress tun
+ExecStart=/opt/dafeiyu/runtime/qq-egress/tun2socks --device tun://dfyqq0 --proxy socks5://127.0.0.1:11080 --mtu 1400 --loglevel warn
+Restart=always
+RestartSec=3
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,26 @@
+[Unit]
+Description=Dafeiyu multi-user account service
+Wants=network-online.target
+Requires=dafeiyu-runtime.service
+After=network-online.target dafeiyu-runtime.service
+[Service]
+Type=simple
+User=dafeiyu
+Group=dafeiyu
+WorkingDirectory=/opt/dafeiyu
+Environment=PORT=13082
+Environment=TZ=Asia/Shanghai
+Environment=DAFEIYU_DATA_ROOT=/opt/dafeiyu/data
+Environment=DAFEIYU_ORIGINS=http://192.168.1.149:3081,https://dafeiyu.yrxs.net
+ExecStart=/usr/local/bin/dafeiyu-node manager/server.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=90
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/dafeiyu/data
+[Install]
+WantedBy=multi-user.target

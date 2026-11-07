@@ -1,7 +1,8 @@
 // Blank lines mark separate chat bubbles; long paragraphs split at sentence boundaries.
+import { chatText } from './reply-summary.js';
 export function messageParts(text, limit = 240) {
   const parts = [];
-  for (const paragraph of String(text).split(/\n\s*\n/)) {
+  for (const paragraph of chatText(text).split(/\n\s*\n/)) {
     let rest = paragraph.trim();
     while (Array.from(rest).length > limit) {
       const chars = Array.from(rest);

@@ -12,7 +12,7 @@ function setup(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fish-followup-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const store = new Store(dir); const sent = [];
-  const config = { qq: { enabled: true }, social: { followupWaitMinutes: 30 }, agent: { maxOutgoingPerHour: 20 } };
+  const config = { qq: { enabled: true, adminUsers: ['1'] }, social: { followupWaitMinutes: 30 }, agent: { maxOutgoingPerHour: 20 } };
   const qq = { send: async (...args) => { sent.push(args); return { message_id: sent.length }; }, call: async () => null };
   const tools = new SocialTools(config, store, qq, {});
   return { store, tools, qq, config, sent };

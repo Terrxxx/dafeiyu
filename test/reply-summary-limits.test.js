@@ -8,6 +8,7 @@ import { SocialTools } from '../src/tools.js';
 import { Agent } from '../src/agent.js';
 import { HarnessAgent } from '../src/harness-agent.js';
 import { unwrapReply } from '../src/reply-summary.js';
+import { QQ } from '../src/qq.js';
 
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fish-summary-'));
@@ -58,7 +59,8 @@ test('直接与Harness路径只返回聊天正文，简要概述进日志且不�
     const audit = fs.readFileSync(store.auditFile, 'utf8');
     assert.ok(!audit.includes('api-secret')); assert.ok(!audit.includes('ws-secret'));
     assert.ok(!audit.includes('PRIVATE_REASONING_NOT_FOR_LOG')); assert.ok(audit.includes('[已隐藏]'));
-    assert.ok(JSON.stringify(requests).includes('不要输出逐步推理'));
+    const { buildSystemPrompt } = await import('../src/runtime-skills.js');
+    assert.ok((buildSystemPrompt(config.persona) + JSON.stringify(requests)).includes('不要输出逐步推理'));
   }
 });
 test('概述缺失明确标记，损坏的封装不泄露到聊天，日志开关可关闭', async t => {
@@ -70,4 +72,37 @@ test('概述缺失明确标记，损坏的封装不泄露到聊天，日志开�
   const { store, config } = fixture(t); config.logging.replySummary = false;
   const agent = new Agent(config, store, {}); agent.onDecisionSummary = () => assert.fail('日志已关闭');
   agent.reportDecision('s', '概述', 'test'); assert.equal(fs.existsSync(store.auditFile), false);
+});
+
+test('HTML换行附着封装时只提取正文，空正文、夹杂文字及嵌套封装不外发', async () => {
+  for (const suffix of ['</br>', '<br>', '<br/>', '<BR />']) {
+    assert.equal(unwrapReply(`{"reply":"好呀<br>走吧","summary":"接话"}${suffix}`).text, '好呀\n走吧');
+    assert.throws(() => unwrapReply(`{"reply":"","summary":""}${suffix}`), /正文为空/);
+  }
+  assert.equal(unwrapReply('```json\n{"reply":"好呀","summary":"接话"}\n```</br>').text, '好呀');
+  assert.equal(unwrapReply('{"reply":"","summary":""}</br>', true).text, '');
+  for (const text of ['说明：{"reply":"好呀","summary":"接话"}</br>', '{"reply":"好呀","summary":"接话"}尾巴', '{"reply":"截断</br>', '{"reply":false,"summary":"不发"}</br>', JSON.stringify({ reply: '{"reply":"","summary":""}</br>', summary: '嵌套' })]) assert.throws(() => unwrapReply(text), /封装/);
+  const qq = new QQ({}, () => {}); const sent = []; qq.call = async (action, params) => { sent.push(params); return { message_id: 1 }; };
+  assert.throws(() => qq.send('private', '1', '{"reply":"","summary":""}</br>'), /正文为空/);
+  assert.equal(sent.length, 0);
+  await qq.send('group', '2', '{"reply":"好呀","summary":"内部概述"}</br>');
+  assert.deepEqual(sent[0].message, [{ type: 'text', data: { text: '好呀' } }]);
+});
+
+test('两种模型入口即使关闭概述日志仍解析封装，工具发送也只使用正文', async t => {
+  for (const harness of [false, true]) {
+    const { store, config } = fixture(t); config.logging.replySummary = false;
+    const responses = ['{"reply":"好呀","summary":"内部概述"}</br>', '{"reply":"","summary":""}</br>'];
+    const sent = []; const qq = { send: async (kind, target, text) => { sent.push(text); return { message_id: 1 }; } };
+    const tools = new SocialTools(config, store, qq, {});
+    const agent = harness ? new HarnessAgent(config, store, tools, { run: async () => responses.shift() }) : new Agent(config, store, tools, async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: responses.shift() } }] }) }));
+    agent.onDecisionSummary = () => assert.fail('logging disabled');
+    assert.equal(await agent.run('qq:user:1', '你好', false, { replySummary: true }), '好呀');
+    await assert.rejects(agent.run('qq:user:1', '你好', false, { replySummary: true }), /正文为空/);
+    tools.begin('qq:user:1', { kind: 'private', target: '1', sender: '1', id: '9', key: 'reply:9' });
+    await assert.rejects(tools.call('qq_reply_current', { text: '{"reply":"","summary":""}</br>' }), /正文为空/);
+    await tools.call('qq_reply_current', { text: '{"reply":"好呀","summary":"内部概述"}</br>' });
+    assert.deepEqual(sent, ['好呀']);
+    assert.equal(store.context('qq:user:1').at(-1).content, '好呀');
+  }
 });

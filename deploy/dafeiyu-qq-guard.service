@@ -1,0 +1,9 @@
+[Unit]
+Description=Dafeiyu QQ fail-closed routing guard
+Before=docker.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/dafeiyu-qq-egress guard
+RemainAfterExit=true
+[Install]
+WantedBy=multi-user.target

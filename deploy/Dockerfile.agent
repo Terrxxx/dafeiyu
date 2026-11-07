@@ -1,0 +1,5 @@
+FROM node:24-bookworm-slim
+RUN printf 'deb http://mirrors.tuna.tsinghua.edu.cn/debian trixie main\ndeb http://mirrors.tuna.tsinghua.edu.cn/debian trixie-updates main\n' > /etc/apt/sources.list && rm -f /etc/apt/sources.list.d/debian.sources && apt-get update && apt-get install -y --no-install-recommends chromium fonts-noto-cjk libgomp1 ca-certificates && rm -rf /var/lib/apt/lists/*
+ENV TZ=Asia/Shanghai
+CMD ["node", "/opt/dafeiyu/src/main.js"]
+

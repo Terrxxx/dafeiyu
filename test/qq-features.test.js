@@ -16,7 +16,7 @@ function setup(t) {
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const store = new Store(dir); const calls = [];
   const qq = { call: async (name, args) => { calls.push({ name, args }); return { message_id: 5 }; } };
-  const config = { qq: { enabled: true }, social: { qzoneEnabled: true }, agent: { maxOutgoingPerHour: 10, historyMessages: 20 } };
+  const config = { qq: { enabled: true, adminUsers: ['1'] }, social: { qzoneEnabled: true }, agent: { maxOutgoingPerHour: 10, historyMessages: 20 } };
   const tools = new SocialTools(config, store, qq, {});
   tools.begin('qq:user:1', { kind: 'private', target: '1', sender: '1', session: 'qq:user:1', id: '9', key: 'reply:9' });
   return { store, tools, calls, qq };
@@ -45,7 +45,7 @@ test('空间点赞使用重新读取的真实参数，已赞、缺参及动态�
   z.auth = async () => ({ id: '9' });
   z.posts = async () => ({ posts: [post] });
   z.call = async (endpoint, args, auth, isPost) => {
-    writes++; assert.ok(endpoint.endsWith('like_cgi_likev6')); assert.equal(isPost, true);
+    writes++; assert.ok(endpoint.endsWith('internal_dolike_app')); assert.equal(isPost, true);
     assert.equal(args.opuin, '9'); assert.equal(args.ouin, '1'); assert.equal(args.fid, 'abc_123');
     assert.equal(args.abstime, '100'); assert.equal(args.appid, '311'); assert.equal(args.typeid, '0');
     return { code: 0 };
@@ -66,7 +66,7 @@ test('空间顶层评论绑定真实作者和动态，不能伪装楼层回复',
   z.auth = async () => ({ id: '9' }); z.posts = async () => ({ posts: [post] });
   z.call = async (endpoint, args, _auth, isPost) => {
     assert.ok(endpoint.endsWith('emotion_cgi_re_feeds')); assert.equal(isPost, true);
-    assert.equal(args.hostUin, '1'); assert.equal(args.topicId, '1_abc_123');
+    assert.equal(args.hostUin, '1'); assert.equal(args.topicId, '1_abc_123__1');
     assert.equal(args.content, '好耶'); assert.equal(args.commentId, undefined);
     return { code: 0, commentid: '55' };
   };
@@ -119,6 +119,7 @@ test('收到的图片按会话隔离，只有自主收藏的表情才可复用',
   assert.equal(tools.media.get(image.id, 'qq:user:2').savedSticker, true);
   await tools.call('qq_save_sticker', { imageId: image.id }); assert.equal(calls.length, 1);
   tools.begin('autonomous-social');
+  tools.avatarIdentity.verify = async candidate => { assert.equal(candidate, 'data:image/png;base64,aGVsbG8='); };
   assert.equal((await tools.call('qq_set_avatar', { imageId: image.id })).changed, true);
   await assert.rejects(() => tools.call('qq_set_avatar', { imageId: image.id }), /24小时/);
   assert.throws(() => tools.media.get('../../secret', tools.scope));
@@ -126,17 +127,17 @@ test('收到的图片按会话隔离，只有自主收藏的表情才可复用',
 test('图片发送引用真实消息并阻止自动文本重复；失败不记录成功历史', async t => {
   const { tools, calls, store, qq } = setup(t);
   const asset = tools.media.ingest('data:image/png;base64,aGVsbG8=', '表情', 'qq:user:1');
-  const agent = { shouldReply: async () => true, run: async () => {
-    await tools.call('qq_send_image', { kind: 'private', target: '1', imageId: asset.id, quote: true }); return '不应自动发送';
+  const agent = { config: tools.config, shouldReply: async () => true, run: async () => {
+    await tools.call('qq_send_image', { kind: 'private', target: '1', imageId: asset.id, quote: true }); return '';
   } };
   await handleQQMessage({ kind: 'private', target: '1', sender: '1', session: 'qq:user:1', id: '9', text: '发图' }, 'reply:9', { agent, tools, store, qq, throttle: { wait: async () => {} }, log() {} });
   assert.equal(calls.length, 1); assert.equal(calls[0].args.message[0].type, 'reply'); assert.equal(calls[0].args.message[1].type, 'image');
-  assert.ok(store.context('qq:user:1').at(-1).content.includes('已发送图片'));
+  assert.equal(store.context('qq:user:1').at(-1).content, '[图片 '+asset.id+']');
   tools.begin('qq:user:1', { kind: 'private', target: '1', sender: '1', key: 'fail', id: '10' });
   qq.call = async () => { throw new Error('offline'); };
   const before = store.context('qq:user:1').length;
   await assert.rejects(() => tools.call('qq_send_image', { kind: 'private', target: '1', imageId: asset.id }));
-  assert.equal(store.context('qq:user:1').length, before); assert.equal(store.data.actions.fail.state, 'uncertain');
+  assert.equal(store.context('qq:user:1').length, before); assert.equal(store.data.actions['fail:image:'+asset.id].state, 'uncertain');
 });
 test('语音发送真实record消息，同样受主动联系限制', async t => {
   const { tools, calls } = setup(t); tools.synthesizeSpeech = async text => { assert.equal(text, '你好'); return Buffer.from('audio'); };
