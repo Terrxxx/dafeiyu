@@ -7,6 +7,7 @@ import { executeActivityActions } from './activity-cycle.js';
 import {eligibleSocialTargets,socialHints,saveSocialTask} from './social-planning.js';
 import {dialogueView} from './proactive-dialogue.js';
 import {lifeActivities,saveSelfTask} from './life-schedule.js';
+import { restEnergy } from './sleep.js';
 export async function socialCycle({agent,tools,store,config,log}) {
   return withAICycleBudget(async()=>{
     tools.begin('autonomous-social');const epoch=memoryEpoch(store);
@@ -27,8 +28,20 @@ export async function socialCycle({agent,tools,store,config,log}) {
     const mood=f.snapshot('autonomous-social').mood;
     const interests=(agent.personality.data.interests||[]).filter(x=>x.samples>=3).slice(-3).map(x=>({category:x.category,score:x.score}));
     const pending=(store.data.tasks||[]).filter(t=>['pending','running'].includes(t.status)).length;
-    const plan=await agent.taskJSON('这是你主动生活的时间，不需要等用户命令。从真实候选选择一个对象聊天、逛空间或安排稍后联系；精神尚可且有合适对象时可以主动开话题，也可以去看朋友的新动态，不能因为对方没有回复私聊就认为不能看空间。根据情绪、关系、空闲时长与兴趣自主选择，也允许quiet，不强制发言或点赞。只返回 {"activity":"chat|space|task|selfTask|quiet","kind":"private|group","id":"候选ID"}。chat和task仅选canChat=true；space仅选canSpace=true。空间可只看不互动；已有待办不堆重复任务；selfTask表示给自己安排稍后的浏览、逛店或整理想法，不依赖聊天对象，可省略kind和id；不必每轮安排。已有日程不要重复。这一步只选活动，不执行、不浏览视频。',{choices:socialHints(agent,store,choices),mood,interests,pending,selfActivities:lifeActivities(config,tools),pendingPlans:(store.data.tasks||[]).filter(t=>t.status==='pending').slice(-4).map(t=>({kind:t.autonomousActivity,prompt:t.prompt.slice(0,60)})),canSchedule:!!tools.tasks&&pending<TASK_LIMIT},{kind:'social',persona:false,maxTokens:100});
+    const lastRest = tools.sleep?.data?.lastSleep;
+    const rest = tools.sleep?.requestRest ? {
+      canSleep: mood.energy <= restEnergy,
+      lastRestMinutesAgo: lastRest ? Math.max(0, Math.floor((Date.now() - lastRest.wokeAt) / 60000)) : undefined,
+    } : undefined;
+    const plan=await agent.taskJSON('这是你主动生活的时间，不需要等用户命令。从真实候选选择一个对象聊天、逛空间或安排稍后联系；精神尚可且有合适对象时可以主动开话题，也可以去看朋友的新动态，不能因为对方没有回复私聊就认为不能看空间。根据情绪、精力、关系和兴趣自主选择，也可quiet。只返回 {"activity":"chat|space|task|selfTask|sleep|nap|quiet","kind":"private|group","id":"候选ID","minutes":15}。rest存在时，canSleep为真可选择sleep马上正常睡，或nap自己选5至30分钟（即使精力高也可以，偶尔小睡，刚休息过别机械重复）；这两项无目标，只有nap填写minutes。chat和task仅选canChat=true；space仅选canSpace=true。空间可只看不互动；selfTask给自己安排稍后的浏览、逛店或整理想法，无目标；已有日程别重复。这一步只选活动。',{choices:socialHints(agent,store,choices),mood,rest,interests,pending,selfActivities:lifeActivities(config,tools),pendingPlans:(store.data.tasks||[]).filter(t=>t.status==='pending').slice(-4).map(t=>({kind:t.autonomousActivity,prompt:t.prompt.slice(0,60)})),canSchedule:!!tools.tasks&&pending<TASK_LIMIT},{kind:'social',persona:false,maxTokens:100});
     assertMemoryEpoch(store,epoch);if(plan.activity==='quiet'){log('自主社交：选择安静，1次请求');return{calls:1};}
+    if (plan.activity === 'sleep' || plan.activity === 'nap') {
+      if (!rest || (plan.activity === 'sleep' && !rest.canSleep)) return { calls: 1 };
+      const minutes = plan.activity === 'nap' ? plan.minutes ?? NaN : undefined;
+      const result = tools.sleep.requestRest({ minutes });
+      if (result) log(result.reason === 'nap' ? `自主休息：小睡${minutes}分钟` : '自主休息：精力不足，已进入睡眠');
+      return { calls: 1, resting: !!result };
+    }
     if(plan.activity==='selfTask'){
       if(!tools.tasks||pending>=TASK_LIMIT)throw Error('暂无自主日程名额');
       const decision=await agent.taskJSON('为自己安排一个具体的未来活动，不需要找人聊天。只返回 {"task":{"kind":"允许的活动","prompt":"具体要做什么，最多200字","delayMinutes":120}}；也可task为null。不重复已有日程，不写泛泛自主任务，不因无人可聊天就机械安排。',{activities:lifeActivities(config,tools),pendingTasks:(store.data.tasks||[]).filter(t=>t.status==='pending').slice(-6).map(t=>({activity:t.autonomousActivity,prompt:t.prompt.slice(0,100),due:t.due})),mood,interests},{kind:'social',maxTokens:240});

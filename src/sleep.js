@@ -3,8 +3,11 @@ import path from 'node:path';
 import { readLifeControls, defaultRates } from './life-controls.js';
 
 const HOUR = 3600000;
+const MINUTE = 60000;
 const DAY = 24 * HOUR;
 const clamp = n => Math.max(0, Math.min(100, n));
+export const restEnergy = 25;
+export const validNapMinutes = minutes => Number.isInteger(minutes) && minutes >= 5 && minutes <= 30;
 
 export class Sleep {
   constructor(store, feelings, now = Date.now, random = Math.random) {
@@ -16,7 +19,7 @@ export class Sleep {
     this.data.energyRateVersion = 1;
     this.data.chatEvents ||= [];
     this.data.chatTargets ||= {};
-    if (this.data.dozeRuleVersion !== 2) { this.data.dozeAtEnergy = this.chooseDozeEnergy(); this.data.dozeRuleVersion = 2; }
+    if (this.data.dozeRuleVersion !== 3) { this.data.dozeAtEnergy = this.chooseDozeEnergy(); this.data.dozeRuleVersion = 3; }
     this.data.rates ||= { ...defaultRates };
     this.data.nightPlans ||= {};
     if (this.data.mode === 'sleep' && this.data.reason === 'exhausted' && this.data.minWakeAt && this.data.exhaustedWakeWindowVersion !== 1) {
@@ -27,7 +30,11 @@ export class Sleep {
     }
   }
   chooseWakeDelay() { return Math.max(0, Math.min(30, Math.floor(this.random() * 31))); }
-  chooseDozeEnergy() { return this.random() < 0.95 ? 10 : 0; }
+  chooseDozeEnergy() {
+    const chance = this.random();
+    if (chance >= 0.95) return 0;
+    return 10 + Math.max(0, (0.45 - chance) / 0.45) * 9;
+  }
   drainRate(at = this.now()) {
     const count = this.data.chatEvents.filter(event => event.at <= at && event.at + HOUR > at).length;
     const { baseDrainPerHour, maxDrainPerHour } = this.data.rates;
@@ -79,29 +86,63 @@ export class Sleep {
     const chat = this.data.chatTargets[`${kind}:${target}`];
     if (chat?.lastIncoming && this.now() - chat.lastIncoming <= 5 * 60000) chat.lastReplyAt = this.now();
   }
-  enter(reason, at, energy = this.feelings.data.mood.energy) {
+  isNap() { return this.data.mode === 'sleep' && this.data.reason === 'nap'; }
+  shouldCompact() { return !this.isNap() && (this.data.needsCompaction || this.data.mode === 'sleep'); }
+  requestRest({ minutes, reason = 'drowsy', beforeSleep } = {}) {
+    if (minutes !== undefined && !validNapMinutes(minutes)) throw new Error('小睡时间须为5至30分钟的整数');
+    const now = this.now();
+    this.tick(now);
+    if (this.data.mode === 'sleep') return null;
+    const energy = this.feelings.data.mood.energy;
+    if (minutes === undefined && energy > restEnergy) {
+      if (reason !== 'admin') return null;
+      minutes = 15;
+    }
+    this.enter(minutes === undefined ? reason : 'nap', now, energy, { minutes, beforeSleep });
+    this.store.save();
+    this.onRestScheduled?.();
+    return { reason: this.data.reason, napUntil: this.data.napUntil };
+  }
+  enter(reason, at, energy = this.feelings.data.mood.energy, { minutes, beforeSleep, wakeNotBefore = 0 } = {}) {
     if (energy <= 0) reason = 'exhausted';
-    const chats = this.activeChats(at);
+    const nap = reason === 'nap';
+    const alreadySleeping = this.data.mode === 'sleep';
+    const chats = alreadySleeping ? this.data.sleepChats : this.activeChats(at);
     // The farewell transport is admitted synchronously before the sleep state becomes active.
     this.transitioning = true;
-    try { this.onBeforeSleep?.({ reason, at, energy, chats }); }
+    try {
+      if (beforeSleep) beforeSleep({ reason, minutes });
+      else if (!nap && !alreadySleeping) this.onBeforeSleep?.({ reason, at, energy, chats });
+    }
     catch (error) { this.store.audit?.('sleep-farewell-error', { message: error.message }); }
     finally { this.transitioning = false; }
     this.data.mode = 'sleep'; this.data.startedAt = at; this.data.reason = reason;
     this.data.sleepChats = chats;
-    this.data.minWakeAt = reason === 'exhausted' ? this.midnight(this.day(at)) + 8 * HOUR : 0;
+    this.data.minWakeAt = reason === 'exhausted' ? this.midnight(this.day(at)) + 8 * HOUR : wakeNotBefore;
     if (reason === 'exhausted' && this.data.minWakeAt <= at) this.data.minWakeAt += DAY;
     this.data.wakeDelayMinutes = reason === 'exhausted' ? this.chooseWakeDelay() : 0;
     this.data.minWakeAt += this.data.wakeDelayMinutes * 60000;
     this.data.exhaustedWakeWindowVersion = 1;
     this.data.startEnergy = energy; this.data.dreamChecked = false; this.data.dream = null;
+    if (nap) {
+      this.data.napUntil = at + minutes * MINUTE;
+      return;
+    }
+    delete this.data.napUntil;
     // Decide locally before resting; never query a model while asleep.
     this.data.wakeEnergy = this.data.nextWakeEnergy ?? [80, 90, 100][Math.min(2, Math.floor(this.random() * 3))];
     delete this.data.nextWakeEnergy;
     this.data.needsCompaction = true;
   }
+  beginNight(day, at, energy) {
+    this.data.nightDay = day;
+    // A nap that reaches the scheduled bedtime turns into the regular night
+    // without waking early or starting a second farewell.
+    if (this.isNap()) this.enter('midnight', at, energy, { wakeNotBefore: this.data.napUntil });
+    else if (this.data.mode === 'awake') this.enter('midnight', at, energy);
+  }
   dreamUntil(at) {
-    if (this.data.dreamChecked || at - this.data.startedAt < HOUR / 2) return;
+    if (this.isNap() || this.data.dreamChecked || at - this.data.startedAt < HOUR / 2) return;
     this.data.dreamChecked = true;
     if (this.random() >= 0.4) return;
     // Local imagination only; never put another person's private messages into a global dream.
@@ -115,8 +156,13 @@ export class Sleep {
     this.data.lastSleep = { id: `${this.data.startedAt}:${at}`, startedAt: this.data.startedAt, wokeAt: at,
       durationMinutes: Math.round((at - this.data.startedAt) / 60000), reason: this.data.reason,
       startEnergy: this.data.startEnergy, endEnergy: energy, dream: this.data.dream, chats: this.data.sleepChats || [] };
+    delete this.data.napUntil;
     this.data.dozeAtEnergy = this.chooseDozeEnergy();
     this.data.recentSleeps = [...(this.data.recentSleeps || []), this.data.lastSleep].slice(-14);
+  }
+  canWake(at, energy) {
+    return this.data.mode === 'sleep' && (this.isNap() ? at >= this.data.napUntil :
+      energy >= this.data.wakeEnergy && at >= (this.data.minWakeAt || 0));
   }
   tick(at = this.now(), syncControls = true) {
     if (this.transitioning) return;
@@ -137,14 +183,15 @@ export class Sleep {
     this.feelings.settle();
     const firstDay = this.day(cursor);
     if (this.data.nightDay !== firstDay && cursor >= this.bedtime(firstDay) && cursor - this.midnight(firstDay) < 8 * HOUR) {
-      this.data.nightDay = firstDay; if (this.data.mode !== 'sleep') this.enter('midnight', cursor, energy);
+      this.beginNight(firstDay, cursor, energy);
     }
     if (this.data.nightDay !== firstDay + 1 && cursor >= this.bedtime(firstDay + 1)) {
-      this.data.nightDay = firstDay + 1; if (this.data.mode !== 'sleep') this.enter('midnight', cursor, energy);
+      this.beginNight(firstDay + 1, cursor, energy);
     }
+    if (this.isNap() && energy <= 0) this.enter('exhausted', cursor, energy);
     if (this.data.mode === 'awake' && energy <= this.data.dozeAtEnergy) this.enter(energy <= 0 ? 'exhausted' : 'drowsy', cursor, energy);
-    while (cursor < now || (this.data.mode === 'sleep' && energy >= this.data.wakeEnergy && cursor >= (this.data.minWakeAt || 0))) {
-      if (this.data.mode === 'sleep' && energy >= this.data.wakeEnergy && cursor >= (this.data.minWakeAt || 0)) {
+    while (cursor < now || this.canWake(cursor, energy)) {
+      if (this.canWake(cursor, energy)) {
         this.wake(cursor, energy);
         if (cursor === now) break;
       }
@@ -154,11 +201,13 @@ export class Sleep {
       const nextBedtime = this.bedtime(night);
       const boundary = Math.min(now, nextMidnight, nextBedtime);
       if (this.data.mode === 'sleep') {
-        const wakeAt = Math.max(cursor + Math.max(0, this.data.wakeEnergy - energy) / this.data.rates.recoveryPerHour * HOUR, this.data.minWakeAt || 0);
+        const nap = this.isNap();
+        const wakeAt = nap ? this.data.napUntil :
+          Math.max(cursor + Math.max(0, this.data.wakeEnergy - energy) / this.data.rates.recoveryPerHour * HOUR, this.data.minWakeAt || 0);
         const end = Math.min(boundary, wakeAt);
         energy = clamp(energy + (end - cursor) / HOUR * this.data.rates.recoveryPerHour); cursor = end;
         this.dreamUntil(cursor);
-        if (cursor === wakeAt) energy = Math.max(energy, this.data.wakeEnergy);
+        if (!nap && cursor === wakeAt) energy = Math.max(energy, this.data.wakeEnergy);
       } else {
         const rate = this.drainRate(cursor);
         const restAt = cursor + Math.max(0, energy - this.data.dozeAtEnergy) / rate * HOUR;
@@ -167,10 +216,7 @@ export class Sleep {
         energy = clamp(energy - (end - cursor) / HOUR * rate); cursor = end;
         if (cursor === restAt) { energy = this.data.dozeAtEnergy; this.enter(energy <= 0 ? 'exhausted' : 'drowsy', cursor, energy); }
       }
-      if (cursor === nextBedtime) {
-        this.data.nightDay = night;
-        if (this.data.mode !== 'sleep') this.enter('midnight', cursor, energy);
-      }
+      if (cursor === nextBedtime) this.beginNight(night, cursor, energy);
     }
     this.feelings.data.mood.energy = energy;
     this.data.drainPerHour = this.drainRate(now);
@@ -210,7 +256,7 @@ export class Sleep {
     const rest = this.data.lastSleep;
     const { chats, ...visibleRest } = rest || {};
     const memory = rest ? `\n最近一次睡眠记录（历史事件，不代表刚醒）（时间为UTC，精确到秒，不是用户消息）：${markdownData(visibleRest)}。当前已醒${Math.max(0, Math.floor((this.now() - rest.wokeAt) / 60000))}分钟。只有醒后15分钟内可以自称刚醒，超过15分钟不要说刚起床/刚睡醒；超过30分钟不要主动补发起床问候。早上好仅限北京时间05:00–10:59并结合当前会话自然回应，不对每个人重复。若有梦，只当梦境和想象，不当现实见闻或别人说过的话；不必主动告诉每个人。` : '';
-    const locked = asleep && this.data.minWakeAt > this.now() ? `本次耗尽锁定睡眠，最早北京时间${new Date(this.data.minWakeAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}才能醒，即使精力100%也继续睡。` : '';
-    return `北京时间精力作息：${asleep ? '睡眠中' : '清醒'}；energy=${this.feelings.data.mood.energy.toFixed(1)}%，当前清醒消耗每小时${this.drainRate().toFixed(2)}%。每晚北京时间23:50–次日00:10随机入睡，临睡前10分钟逐渐减少回复；精力≤10%有95%概率入睡，0%立即睡并锁到下一个北京时间08:00–08:30随机时刻。${locked}睡眠每小时恢复${this.data.rates.recoveryPerHour}%；普通睡眠80%起可醒、100%必须醒。清醒时可用self_set_wake_energy选择下次普通醒来精力80至100，不能提前解除耗尽锁定。睡觉时不能回复或查询。${this.windDown().active ? `当前进入睡前收尾，约${this.windDown().remainingMinutes}分钟后睡觉。话少一点，先收尾当前话题，不开新话题、不主动社交、不安排群发晚安；程序负责一次短告别，不重复说晚安或我睡了。` : ''}${memory}`;
+    const locked = asleep && this.data.reason === 'exhausted' && this.data.minWakeAt > this.now() ? `耗尽后最早北京时间${new Date(this.data.minWakeAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}才能醒。` : '';
+    return `北京时间作息：${this.isNap() ? '小睡中' : asleep ? '睡眠中' : '清醒'}；energy=${this.feelings.data.mood.energy.toFixed(1)}%。23:50–次日00:10入睡，睡前少聊。低精力可主动入睡，0%锁至下一次08:00–08:30。${locked}普通睡眠恢复到80%–100%醒，可用self_set_wake_energy设定。小睡5–30分钟，到点醒。睡时不回复或查询。${this.windDown().active ? `约${this.windDown().remainingMinutes}分钟后睡觉，收尾当前话题，程序负责一次短告别。` : ''}${memory}`;
   }
 }

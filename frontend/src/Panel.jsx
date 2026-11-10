@@ -122,18 +122,22 @@ function Overview() {
   const [s, , err] = useData("/api/status", 10000);
   const [liveSleep,setLiveSleep]=useState(null);
   const sleeping=liveSleep??s?.sleep?.mode==='sleep';
+  const napping = sleeping && s?.sleep?.reason === 'nap';
   const [headline] = useState(
     () =>
       overviewHeadlines[Math.floor(Math.random() * overviewHeadlines.length)],
   );
   if (err) return <ErrorBox>{err}</ErrorBox>;
   if (!s) return <Empty>正在读取她的生活…</Empty>;
+  const napMinutes = napping ? Math.max(0, Math.ceil((s.sleep.napUntil - Date.now()) / 60000)) : 0;
+  const energyStatus = napping ? `小睡 · 约 ${napMinutes} 分钟后醒` :
+    sleeping ? "睡觉" : liveSleep !== null || s.sleep?.mode === "awake" ? "清醒" : "未同步";
   return (
     <>
       <div className="life-banner">
         <div>
           <span className="eyebrow">HER DAY, AT A GLANCE</span>
-          <h2>{sleeping ? "她正在好好休息。" : headline}</h2>
+          <h2>{napping ? "她正在小睡。" : sleeping ? "她正在好好休息。" : headline}</h2>
           <p>
             {s.unread || 0} 条待查看消息 · {s.users || 0} 位记忆中的朋友
           </p>
@@ -145,13 +149,7 @@ function Overview() {
         <Metric
           label="精力"
           value={Number(s.life?.mood?.energy ?? 0).toFixed(2) + "%"}
-          hint={
-            sleeping
-              ? "当前状态：睡觉"
-              : liveSleep!==null || s.sleep?.mode === "awake"
-                ? "当前状态：清醒"
-                : "当前状态：未同步"
-          }
+          hint={`当前状态：${energyStatus}`}
         />
       </div>
       <MessageStatus onSleep={setLiveSleep}/>
@@ -310,7 +308,7 @@ function Life({ notify }) {
       </Card>
       <Card title="精力">
         {canEdit ? slider("mood", "energy", "精力", 0, 100) : <Ring label="精力" value={v.mood.energy} precision={2} />}
-        <p className="muted">{s.sleep?.mode === "sleep" ? "当前正在睡觉，恢复精力。" : "当前清醒，精力随时间和聊天活动消耗。"}</p>
+        <p className="muted">{s.sleep?.mode === "sleep" ? s.sleep.reason === 'nap' ? "当前正在小睡，恢复精力。" : "当前正在睡觉，恢复精力。" : "当前清醒，精力随时间和聊天活动消耗。"}</p>
       </Card>
       <Card title="精力消耗与恢复">
         {canEdit ? (

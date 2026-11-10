@@ -34,7 +34,7 @@ export async function considerWakeGreeting({ tools, store, qq, agent, log, now =
   const rest = tools.sleep.data.lastSleep;
   if (!rest || tools.sleep.data.greetingConsidered === rest.id) return;
   tools.sleep.data.greetingConsidered = rest.id; store.save();
-  if (now() - rest.wokeAt > 30 * 60000 || now() < rest.wokeAt || rest.durationMinutes < 30) return;
+  if (rest.reason === 'nap' || now() - rest.wokeAt > 30 * 60000 || now() < rest.wokeAt || rest.durationMinutes < 30) return;
   const candidate = [...(rest.chats || [])].sort((a, b) => b.lastOutgoing - a.lastOutgoing).find(chat => {
     if (!['private', 'group'].includes(chat.kind) || !/^[1-9]\d*$/.test(chat.target)) return false;
     if (chat.kind === 'private' && tools.feelings?.data.users[chat.target]?.contactPaused) return false;

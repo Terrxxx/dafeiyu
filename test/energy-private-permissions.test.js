@@ -30,7 +30,7 @@ test('10%时95%的概率睡眠，极少数周期可到0%，0%无条件锁定；�
   assert.equal(asleep, 95);
   const store = { data: { sleep: { version: 2, mode: 'awake', lastTick: Date.parse('2026-10-27T12:00:00+08:00'), dozeAtEnergy: 3 } }, save() {} };
   const sleep = new Sleep(store, { data: { mood: { energy: 9 } }, settle() {} }, () => store.data.sleep.lastTick, () => 0.5);
-  assert.equal(sleep.data.dozeRuleVersion, 2); assert.equal(sleep.sleeping(), true);
+  assert.equal(sleep.data.dozeRuleVersion, 3); assert.equal(sleep.sleeping(), true);
 });
 test('精力显著调节积极情绪，恢复可逆，不反复扣值、不修改用户关系', t => {
   const { store } = setup(t); const feelings = new Feelings(store); const user = feelings.user('7'); user.affinity = 23;

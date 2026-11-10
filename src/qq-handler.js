@@ -9,6 +9,7 @@ import { mergeMessages } from './message-buffer.js';
 import { handlePlannedQQ } from './qq-turn.js';
 import { measureModelTurn } from './turn-meter.js';
 import {messageStage,confirmedMessage} from './qq-processing.js';
+import { handleAdminRest } from './qq-rest-command.js';
 
 export async function handleQQMessage(msg,key,services){
   msg={...msg,processingId:msg.processingId||key};messageStage(services.store,msg,'processing');
@@ -39,6 +40,7 @@ async function handleQQMessageImpl(msg, key, { agent, store, tools, qq, throttle
     log(`QQ：本批判断结束（${msg.session}），睡眠中，已保存未读，不回复`);
     return;
   }
+  if (await handleAdminRest(msg, key, epoch, { agent, store, tools, qq, log })) return;
   const energyMode = tools.sleep?.responseMode() || 'normal';
   if (energyMode === 'sleep') {
     messageStage(store,msg,'sleeping');

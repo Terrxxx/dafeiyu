@@ -258,20 +258,26 @@ async function start() {
   function schedule(task, ms, firstMs = ms, category='other') {
     scheduleRecurring(() => dailyBudget.status().paused||tools.sleep.sleeping() ? undefined : measureActivity(directory,category,task), ms, { queue, timers, stopped: () => stopping, onError: reportError, firstMs });
   }
+  let sleepTimer;
   function sleepClock() {
     if (stopping) return;
+    clearTimeout(sleepTimer);
+    timers.delete(sleepTimer);
     try {
       tools.sleep.tick();
       if (!dailyBudget.status().paused && !tools.sleep.sleeping() && tools.sleep.windDown().active) void queue.add(() => tools.sleep.onWindDown?.()).catch(reportError);
-      if (tools.sleep.data.needsCompaction || tools.sleep.data.mode === "sleep") {
+      if (tools.sleep.shouldCompact()) {
         const result = compactMemories(store);
         if (result.days || result.users) log(`睡眠期间的本地记忆整理与压缩已完成（用户清单${result.users}份）`);
       }
     } catch (error) { reportError(error); }
-    const untilMidnight = tools.sleep.midnight(tools.sleep.day() + 1) - Date.now();
-    const timer = setTimeout(() => { timers.delete(timer); sleepClock(); }, Math.max(1, Math.min(60000, untilMidnight)));
-    timers.add(timer);
+    const now = Date.now();
+    const untilMidnight = tools.sleep.midnight(tools.sleep.day() + 1) - now;
+    const untilNapEnds = tools.sleep.isNap() ? tools.sleep.data.napUntil - now : Infinity;
+    sleepTimer = setTimeout(sleepClock, Math.max(1, Math.min(60000, untilMidnight, untilNapEnds)));
+    timers.add(sleepTimer);
   }
+  tools.sleep.onRestScheduled = sleepClock;
   sleepClock();
   if (config.weather.enabled) schedule(async () => {
     try { await tools.weather.refresh(); } catch (error) { log(`本地天气暂未更新：${error.message}`); }
