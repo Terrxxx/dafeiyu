@@ -34,6 +34,7 @@ import { rememberSleepUnread, reviewSleepUnread } from './sleep-inbox.js';
 import { installSleepFarewell, considerWakeGreeting } from './sleep-social.js';
 import { userBlocked, filterUserMessage, acceptedSource, assertMemoryEpoch } from './user-controls.js';
 import { recordUserActivity } from './user-memory.js';
+import { acquireAgentLock } from './agent-lock.js';
 
 const config = loadConfig();
 const command = process.argv[2] || 'start';
@@ -85,17 +86,8 @@ async function doctor() {
 async function start() {
   if (!config.apiKey) { await doctor(); throw new Error('请先在 .env 填写 API Key，再启动'); }
   if (config.qq.enabled && !config.wsToken) throw new Error('请先配置 NAPCAT_TOKEN，并在 NapCat 中设置相同Token');
-  const directory = DATA_ROOT; fs.mkdirSync(directory, { recursive: true });
-  const lock = path.join(directory, 'agent.lock');
-  if (fs.existsSync(lock)) {
-    const pid = Number(fs.readFileSync(lock, 'utf8'));
-    let alive = true;
-    try { process.kill(pid, 0); } catch (error) { if (error.code === 'ESRCH') alive = false; else throw error; }
-    if (alive) throw new Error('已有实例在运行，请先停止它');
-    fs.unlinkSync(lock);
-  }
-  fs.writeFileSync(lock, String(process.pid), { flag: 'wx' });
-  process.on('exit', () => { try { fs.unlinkSync(lock); } catch {} });
+  const directory = DATA_ROOT;
+  acquireAgentLock(directory);
   const store = new Store(directory);const dailyBudget=new DailyBudget(config,store);
   store.qqProcessing=new QQProcessing(directory,{onError:error=>log(`QQ消息状态暂未保存：${error.code||'写入失败'}`)});
   installBiliJournal(bili, store);
