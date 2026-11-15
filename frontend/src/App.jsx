@@ -260,6 +260,9 @@ function App() {
           )}
         </nav>
         <div className="sidebar-bottom">
+          <a className="sidebar-repository" href="https://github.com/Terrxxx/dafeiyu" target="_blank" rel="noopener noreferrer">
+            GitHub <ArrowUpRight size={14} aria-hidden="true" />
+          </a>
           <Theme />
           <button
             onClick={async () => {

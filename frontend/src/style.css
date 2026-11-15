@@ -316,6 +316,22 @@ strong {
   background: transparent;
   color: var(--muted);
 }
+.sidebar-repository {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.sidebar-repository:hover {
+  color: var(--text);
+  background: var(--line);
+}
+.sidebar-repository svg:last-child {
+  margin-left: auto;
+}
 .theme {
   display: flex;
   align-items: center;
