@@ -216,7 +216,7 @@ export function usageStatistics(directory, config = {}, at = Date.now()) {
         date,
         tokens: Number(entry?.tokens) || 0,
         requests: Number(entry?.requests) || 0,
-        missingUsage: !!entry?.missingUsage,
+        missingUsage: !!(entry?.missingUsage || entry?.missingCustomUsage),
         recorded: date >= a.since,
       };
     }),

@@ -7,6 +7,7 @@ import { requestLog } from './ai-request-log.js';
 import { requestShape } from './ai-request-log.js';
 import { startTurnRequest } from './turn-meter.js';
 import { reserveAICycle } from './ai-cycle-budget.js';
+import { modelRequest } from './model-provider.js';
 let blocked = false;
 
 export function billingRequest(request, context) {
@@ -36,7 +37,7 @@ export function billingRequest(request, context) {
       budget?.record(usage, started, requestId);
     };
     let response;
-    try { response = await request(url, options); }
+    try { response = await modelRequest(request, context?.config, url, options); }
     catch (error) { finish(undefined, '请求失败'); throw error; }
     if (process.env.DAFEIYU_MANAGED && response.status === 402) {
       blocked = true;

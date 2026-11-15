@@ -7,6 +7,7 @@ import{componentCatalog}from'../src/component-catalog.js';
 import{atomicWriteFile}from'../src/atomic-file.js';
 import{publishComponentPolicy}from'../src/component-policy.js';
 import{dailyStatus}from'../src/daily-budget.js';
+import { modelSettings } from '../src/model-provider.js';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -37,7 +38,7 @@ export async function startManager({dataRoot=process.env.DAFEIYU_DATA_ROOT||path
  async function panelFor(name){
   if(!panels.has(name))panels.set(name,(async()=>{
    await refresh(name);logs.set(name,await tenants.logs(name));
-   const panel=await startWebPanel({root:tenants.directory(name),dataRoot:tenants.directory(name),port:0,controller:{status:()=>snapshots.get(name)||{phase:'stopped'},logs:()=>logs.get(name)||[],control:async action=>{const value=await tenants.control(name,action);await refresh(name);return value;}}});return panel;
+   const panel=await startWebPanel({root:tenants.directory(name),dataRoot:tenants.directory(name),port:0,controller:{status:()=>snapshots.get(name)||{phase:'stopped'},logs:()=>logs.get(name)||[],model:()=>modelSettings(accounts.bot(name)?.secrets),control:async action=>{const value=await tenants.control(name,action);await refresh(name);return value;}}});return panel;
   })().catch(e=>{panels.delete(name);throw e;}));
   return panels.get(name);
  }
@@ -112,13 +113,14 @@ export async function startManager({dataRoot=process.env.DAFEIYU_DATA_ROOT||path
    if(pathname==='/account/email'&&req.method==='POST'){rate('email-bind:'+user.username,3,3600000);const body=await bodyOf(req),row=accounts.db.prepare('SELECT * FROM users WHERE username=?').get(user.username);if(row.email_verified)throw error(403,'邮箱已绑定，无法更换');if(!await passwordMatches(body.password,row.password))throw error(400,'当前密码不正确');const email=emailAddress(body.email);await site.verification(user.username,email,'bind');return json(res,200,{ok:true,message:'验证邮件已发送，点击链接验证后绑定邮箱'});}
    if(pathname==='/account/status'&&req.method==='GET'){
     const bot=accounts.bot(user.username);const status=bot?await refresh(user.username):null;
-    return json(res,200,{daily:bot?dailyStatus(tenants.directory(user.username),{model:bot.secrets.model||'deepseek-flash'}):null,username:user.username,role:user.role,bot:bot?{qq:bot.qq,created:bot.created,billing:bot.billing,keySet:!!bot.secrets.apiKey,biliConfigured:!!bot.secrets.biliCookie,desired:!!bot.desired,...status}:null,balance:tenants.balances.get(user.username)||null});
+    const model=bot?modelSettings(bot.secrets):null;
+    return json(res,200,{daily:bot?dailyStatus(tenants.directory(user.username),model):null,username:user.username,role:user.role,bot:bot?{qq:bot.qq,created:bot.created,billing:bot.billing,keySet:!!bot.secrets.apiKey,biliConfigured:!!bot.secrets.biliCookie,desired:!!bot.desired,...status,provider:model.provider,...(model.provider==='custom'?{baseUrl:model.baseUrl,customModel:bot.secrets.customModel||''}:{})}:null,balance:tenants.balances.get(user.username)||null});
    }
    if(pathname==='/account/create'&&req.method==='POST'){const created=await tenants.create(user.username,await bodyOf(req));syncPolicy();return json(res,201,created);}
-   if(pathname==='/account/key'&&req.method==='POST')return json(res,200,await tenants.saveKey(user.username,(await bodyOf(req)).apiKey));
+   if(pathname==='/account/key'&&req.method==='POST')return json(res,200,await tenants.saveKey(user.username,await bodyOf(req)));
    if(pathname==='/account/credits'&&req.method==='GET'){
     const cached=tenants.balances.get(user.username);if(cached&&Date.now()-cached.checkedAt<60000)return json(res,200,cached);
-    if(!balancePending.has(user.username)){const job=tenants.balance(user.username).finally(()=>balancePending.delete(user.username));balancePending.set(user.username,job);}
+    if(!balancePending.has(user.username)){const job=tenants.exclusive(user.username,()=>tenants.balance(user.username)).finally(()=>balancePending.delete(user.username));balancePending.set(user.username,job);}
     return json(res,200,await balancePending.get(user.username));
    }
    if(pathname==='/account/qq/groups'&&req.method==='GET'){
@@ -126,7 +128,7 @@ export async function startManager({dataRoot=process.env.DAFEIYU_DATA_ROOT||path
     if(!groupPending.has(user.username)){const job=(async()=>{const qq=await tenants.qqStatus(user.username);if(!qq.loggedIn)throw error(400,'请先完成QQ登录');const value=await tenants.runtime('groups',user.username);const rows=value.groups||[];groupCache.set(user.username,{rows,at:Date.now()});return rows;})().finally(()=>groupPending.delete(user.username));groupPending.set(user.username,job);}
     return json(res,200,await groupPending.get(user.username));
    }
-   if(pathname==='/account/balance'&&req.method==='POST'){rate(`balance:${user.username}`,6,60000);return json(res,200,await tenants.balance(user.username));}
+   if(pathname==='/account/balance'&&req.method==='POST'){rate(`balance:${user.username}`,6,60000);return json(res,200,await tenants.exclusive(user.username,()=>tenants.balance(user.username)));}
    if(pathname==='/account/qq/start'&&req.method==='POST'){rate(`provision:${user.username}`,3,60000);return json(res,200,await tenants.provision(user.username));}
    if(pathname==='/account/qq/status'&&req.method==='GET')return json(res,200,await tenants.qqStatus(user.username));
    if(pathname==='/account/qq/qr'&&req.method==='POST'){rate(`qr:${user.username}`,10,60000);return json(res,200,await tenants.qr(user.username,(await bodyOf(req)).refresh===true));}

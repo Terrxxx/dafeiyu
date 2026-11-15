@@ -42,6 +42,7 @@ import {
   Card,
   Empty,
   ErrorBox,
+  DailyLimitsNotice,
   Form,
   Ring,
   Metric,
@@ -915,11 +916,11 @@ function Settings({ notify }) {
             notify(r.message);
           }}
         >
-          {group === "发布与额度" && (
+          {group === "发布与额度" && (v.limitsSuspended ? <DailyLimitsNotice /> : (
             <div className="notice">
               日额度按接口返回usage统计，达到任一上限后暂停所有活动，次日北京时间00:00恢复。精力继续按正常节奏变化。单次请求可能超过剩余额度；费用按2026-10-28核实的官方单价估算，不是平台最终账单。
             </div>
-          )}
+          ))}
 
           {group === "QQ" && (
             <div className="contact-pickers">
@@ -961,15 +962,17 @@ function Settings({ notify }) {
               ([key]) =>
                 !(
                   key === "limits.tokensPerDay" &&
-                  !v.config.limits?.tokenEnabled
+                  (v.limitsSuspended || !v.config.limits?.tokenEnabled)
                 ) &&
-                !(key === "limits.cnyPerDay" && !v.config.limits?.costEnabled),
+                !(key === "limits.cnyPerDay" && (v.limitsSuspended || !v.config.limits?.costEnabled)),
             )
             .map(([k, label, hint, type, min]) => {
               const componentId = settingComponent(k);
               const component = components?.components?.find((item) => item.id === componentId);
-              const locked = !!componentId && !component?.enabled;
-              const lockHint = locked ? `组件「${component?.name || { voice: "中文语音", qzone: "QQ空间", bilibili: "B站工具" }[componentId]}」未开启，请先到能力组件开启。` : null;
+              const limitLocked = v.limitsSuspended && k.startsWith("limits.");
+              const componentLocked = !!componentId && !component?.enabled;
+              const locked = limitLocked || componentLocked;
+              const lockHint = limitLocked ? "自定义供应商已停用此限额。" : componentLocked ? `组件「${component?.name || { voice: "中文语音", qzone: "QQ空间", bilibili: "B站工具" }[componentId]}」未开启，请先到能力组件开启。` : null;
               const value =
                   getPath(v.config, k) ??
                   {
@@ -1022,7 +1025,7 @@ function Settings({ notify }) {
                     <input
                       aria-label={label}
                       type="checkbox"
-                      checked={!!value}
+                      checked={!limitLocked && !!value}
                       disabled={locked}
                       onChange={(e) => update(e.target.checked)}
                     />

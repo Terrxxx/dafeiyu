@@ -33,7 +33,7 @@ export async function notifyLowBalance({
   qq,
   log = () => {},
 }) {
-  if (!config.qq.enabled || tools.sleep?.sleeping()) return;
+  if (config.provider === "custom" || !config.qq.enabled || tools.sleep?.sleeping()) return;
   let notice;
   try {
     notice = JSON.parse(

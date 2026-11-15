@@ -148,6 +148,7 @@ export class SocialTools {
     if(!this.components.allowed(name))throw Error('站点或用户已关闭此组件');
     if(name==='self_api_balance'){
       if(this.current&&(this.current.kind!=='private'||!this.config.qq.adminUsers.includes(String(this.current.sender))))throw Error('余额只可自主查询或管理员私聊查询');
+      if(this.config.provider==='custom')return {supported:false,message:'自定义供应商的余额请到供应商后台查看'};
       if(this.balanceCache&&Date.now()-this.balanceCache.checkedAt<60000)return this.balanceCache;
       this.store.reserve('balance-read',60);this.balanceCache=await checkBalance(this.config.apiKey);return this.balanceCache;
     }

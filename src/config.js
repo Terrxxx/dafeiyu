@@ -64,6 +64,7 @@ export function normalizeConfig(config) {
     if (!Array.isArray(list) || list.some(x => typeof x !== 'string')) throw new Error('允许列表必须是字符串数组');
   }
   config.apiKey = process.env.DEEPSEEK_API_KEY || '';
+  config.provider = process.env.DAFEIYU_MODEL_PROVIDER === 'custom' ? 'custom' : 'deepseek';
   config.baseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
   config.model = process.env.DEEPSEEK_MODEL || 'deepseek-flash';
   config.wsUrl = process.env.NAPCAT_WS_URL || 'ws://127.0.0.1:3001';

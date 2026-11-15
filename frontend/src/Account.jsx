@@ -32,6 +32,7 @@ import {
   Card,
   Empty,
   ErrorBox,
+  DailyLimitsNotice,
   Form,
   Ring,
   Metric,
@@ -145,27 +146,7 @@ function Account({ me, tab, notify }) {
         </div>
       ) : tab === "security" ? (
         <div className="two-col">
-          <Card
-            title="模型凭据"
-            subtitle="更换密钥会暂停服务，保存后重新启动。"
-          >
-            <Form
-              submit={async (v) => {
-                await api("/account/key", v);
-                notify("密钥已更新");
-                load();
-              }}
-            >
-              <Field
-                label="新的 API Key"
-                name="apiKey"
-                type="password"
-                required
-                autoComplete="off"
-              />
-              <button className="primary">保存密钥</button>
-            </Form>
-          </Card>
+          <ModelCredentials bot={b} notify={notify} reload={load} />
           <Card title="登录密码">
             <PasswordChange notify={notify} />
           </Card>
@@ -224,7 +205,11 @@ function Account({ me, tab, notify }) {
                 暂停活动，所有记忆与数据都会保留。
               </div>
             </Card>
-            <Balance notify={notify} />
+            {b.provider === "custom" ? (
+              <Card title="API 余额与限额">
+                <DailyLimitsNotice />
+              </Card>
+            ) : <Balance />}
           </div>
           <div className="callout">
             <Heart />
@@ -237,6 +222,43 @@ function Account({ me, tab, notify }) {
         </>
       )}
     </>
+  );
+}
+function ModelCredentials({ bot, notify, reload }) {
+  const [provider, setProvider] = useState(bot.provider || "deepseek");
+  const [baseUrl, setBaseUrl] = useState(bot.baseUrl || "");
+  const [model, setModel] = useState(bot.customModel || "");
+  const [key, setKey] = useState("");
+  return (
+    <Card title="模型凭据" subtitle="保存后实例会停止，重新启动即可生效。">
+      <Form submit={async (values) => {
+        await api("/account/key", values);
+        setKey("");
+        notify("模型配置已更新");
+        await reload();
+      }}>
+        <label className="field">
+          <span>模型供应商</span>
+          <select name="provider" value={provider} onChange={(e) => setProvider(e.target.value)}>
+            <option value="deepseek">DeepSeek</option>
+            <option value="custom">自定义供应商</option>
+          </select>
+        </label>
+        {provider === "custom" && <>
+          <DailyLimitsNotice />
+          <Field label="API URL" name="baseUrl" type="url" maxLength={1024} required
+            value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)}
+            placeholder="https://api.example.com/v1"
+            hint="填写兼容 OpenAI Chat Completions 的公网 HTTPS 地址。只填域名时默认使用 /v1。" />
+          <Field label="模型 ID（选填）" name="model" maxLength={128}
+            value={model} onChange={(e) => setModel(e.target.value)}
+            placeholder="deepseek-flash" />
+        </>}
+        <Field label="新的 API Key" name="apiKey" type="password" maxLength={300} required
+          autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} />
+        <button className="primary">保存模型配置</button>
+      </Form>
+    </Card>
   );
 }
 function Balance() {

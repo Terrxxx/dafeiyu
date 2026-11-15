@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 const exec=promisify(execFile),BASE='/opt/dafeiyu/data',CODE='/opt/dafeiyu',SOCKET='/run/dafeiyu/helper.sock';
 const NAPCAT='ghcr.io/napneko/nodenapcat@sha256:fa4f3cda11e79e3d5c0d8d271565ed4b12e79826ee04b78982484e49348841b7';
-const ENV=new Set(['DEEPSEEK_API_KEY','DEEPSEEK_BASE_URL','DEEPSEEK_MODEL','NAPCAT_TOKEN','BILIBILI_COOKIE']);
+const ENV=new Set(['DEEPSEEK_API_KEY','DEEPSEEK_BASE_URL','DEEPSEEK_MODEL','DAFEIYU_MODEL_PROVIDER','NAPCAT_TOKEN','BILIBILI_COOKIE']);
 const docker=async args=>(await exec('/usr/bin/docker',args,{timeout:150000,maxBuffer:2*1024*1024})).stdout.trim();
 function tenant(name){if(!/^[a-z][a-z0-9_]{2,23}$/.test(name))throw Error('非法用户名');const directory=path.join(BASE,name);if(fs.realpathSync(directory)!==directory)throw Error('禁止符号链接目录');return directory;}
 async function inspect(name){try{return JSON.parse(await docker(['inspect',name]))[0];}catch{return null;}}

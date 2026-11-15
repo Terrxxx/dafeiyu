@@ -35,6 +35,7 @@ export async function startWebPanel({ root = ROOT, port = 3081, controller, data
   const token = randomBytes(32).toString('hex');
   const configFile = path.join(root, 'config.json');
   const dataFile = path.join(dataRoot, 'state.json');
+  const runtimeConfig = () => ({ ...JSON.parse(fs.readFileSync(configFile, 'utf8').replace(/^\uFEFF/, '')), ...controller.model?.() });
   const personaFile = path.join(root, 'persona.md');
   const personaBackups = path.join(dataRoot, 'persona-history');
   const backupIds = () => fs.existsSync(personaBackups) ? fs.readdirSync(personaBackups).filter(id => /^\d{13}-[a-f0-9]{12}\.md$/.test(id)).sort().reverse() : [];
@@ -61,23 +62,24 @@ export async function startWebPanel({ root = ROOT, port = 3081, controller, data
       }
       if(req.method==='GET'&&url.pathname==='/api/voices')return send(200,Object.keys(localVoices.voices).map(id=>{let installed=false;try{localVoices.voiceConfig(id);installed=true;}catch{}return {id,name:({'chaowen':'朝雯 · 中文','kokoro-zf_001':'中文女声 001','kokoro-zf_017':'清亮女声 017','kokoro-zf_036':'中文女声 036'})[id]||id,installed};}));
       if(req.method==='GET'&&url.pathname==='/api/message-status'){
-        const s=state(),config=JSON.parse(fs.readFileSync(configFile,'utf8'));
+        const s=state(),config=runtimeConfig();
         return send(200,messageStatusView(dataRoot,{service:controller.status(),sleep:s.sleep,daily:dailyStatus(dataRoot,config),energy:s.feelings?.mood?.energy}));
       }
       if (req.method === 'GET' && url.pathname === '/api/status') {
         const s = state();
-        const weather = new LocalWeather(JSON.parse(fs.readFileSync(configFile, 'utf8').replace(/^\uFEFF/, '')).weather, { data: s }).snapshot();
-        const life = lifeView(dataDirectory, s);life.editable=JSON.parse(fs.readFileSync(configFile,'utf8')).life?.editingEnabled===true;
-        return send(200, { usage:usageStatistics(dataRoot,JSON.parse(fs.readFileSync(configFile,'utf8'))),storage:(()=>{const{items,...summary}=storageSnapshot(dataRoot,s);return summary;})(),daily:dailyStatus(dataRoot,JSON.parse(fs.readFileSync(configFile,'utf8'))), service: controller.status(), mood: s.feelings?.mood || life.revision ? effectiveMood(life.mood) : null, life, weather, sleep: s.sleep || null,
+        const config = runtimeConfig();
+        const weather = new LocalWeather(config.weather, { data: s }).snapshot();
+        const life = lifeView(dataDirectory, s);life.editable=config.life?.editingEnabled===true;
+        return send(200, { usage:usageStatistics(dataRoot,config),storage:(()=>{const{items,...summary}=storageSnapshot(dataRoot,s);return summary;})(),daily:dailyStatus(dataRoot,config), service: controller.status(), mood: s.feelings?.mood || life.revision ? effectiveMood(life.mood) : null, life, weather, sleep: s.sleep || null,
           unread: s.sleepUnread?.length || 0, users: Object.keys(s.feelings?.users || {}).filter(id => visibleUser(s, readUserControls(dataDirectory), id)).length,
-          messageStatus:messageStatusView(dataRoot,{service:controller.status(),sleep:s.sleep,daily:dailyStatus(dataRoot,JSON.parse(fs.readFileSync(configFile,'utf8'))),energy:s.feelings?.mood?.energy}),
+          messageStatus:messageStatusView(dataRoot,{service:controller.status(),sleep:s.sleep,daily:dailyStatus(dataRoot,config),energy:s.feelings?.mood?.energy}),
           tasks: (s.tasks || []).slice(-10).reverse(), lastMemoryCompression: s.meta?.lastMemoryCompression,
           summary: tailJson(path.join(dataRoot, 'actions.jsonl')).filter(row => row.type === 'reply-summary').slice(-8) });
       }
       if(req.method==='GET'&&url.pathname==='/api/usage')return send(200,usageStatistics(dataRoot,JSON.parse(fs.readFileSync(configFile,'utf8'))));
       if(req.method==='GET'&&url.pathname==='/api/storage')return send(200,storageSnapshot(dataRoot,state()));
       if (req.method === 'GET' && url.pathname === '/api/config') {
-        const text = fs.readFileSync(configFile, 'utf8'); const config=JSON.parse(text.replace(/^\uFEFF/, ''));normalizeQQPolicy(config.qq);for(const key of ['readFansEnabled','readFollowingEnabled','readInboxEnabled','replyInboxEnabled'])config.bilibili[key]??=true; if(config.social)delete config.social.browserPath; return send(200, { config, revision: revision(text) });
+        const text = fs.readFileSync(configFile, 'utf8'); const config=JSON.parse(text.replace(/^\uFEFF/, ''));normalizeQQPolicy(config.qq);for(const key of ['readFansEnabled','readFollowingEnabled','readInboxEnabled','replyInboxEnabled'])config.bilibili[key]??=true; if(config.social)delete config.social.browserPath; return send(200, { config, revision: revision(text), limitsSuspended: controller.model?.()?.provider === 'custom' });
       }
       if (req.method === 'GET' && url.pathname === '/api/persona') {
         const text = fs.readFileSync(personaFile, 'utf8'); return send(200, { text, revision: revision(text) });

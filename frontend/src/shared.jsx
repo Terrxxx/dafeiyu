@@ -195,6 +195,13 @@ export function ErrorBox({ children }) {
     </div>
   ) : null;
 }
+export function DailyLimitsNotice() {
+  return (
+    <div className="notice">
+      使用自定义供应商时，每日 Token 和费用限额自动关闭。请到供应商后台查看余额和用量。切回 DeepSeek 后恢复原设置。
+    </div>
+  );
+}
 export function Form({ submit, children, id, onBusy, disabled = false }) {
   const [busy, b] = useState(false),
     [error, err] = useState("");

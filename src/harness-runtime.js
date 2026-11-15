@@ -13,6 +13,7 @@ import { createInterface } from 'node:readline';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { ROOT } from './config.js';
 import { billingRequest } from './billing.js';
+import { modelCompletionUrl } from './model-provider.js';
 import { memoryEpoch, assertMemoryEpoch } from './user-controls.js';
 
 export async function readJson(request, maxBytes = 24 * 1024 * 1024) {
@@ -189,10 +190,15 @@ export class HarnessRuntime {
     else if (run.json) body.response_format = { type: 'json_object' };
     body.messages = body.messages.map(message => message.role === 'tool' ? { ...message, content: markdownToolContent(message.content) } : message);
     if(run.imageDetail)body.messages=body.messages.map(m=>Array.isArray(m.content)?{...m,content:m.content.map(p=>p.type==='image_url'?{...p,image_url:{...p.image_url,detail:run.imageDetail}}:p)}:m);
-    const response = await withTurnMeter(run.turnMeter,()=>withExistingAICycle(run.cycleBudget, () => this.request(`${this.config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+    const response = await withTurnMeter(run.turnMeter,()=>withExistingAICycle(run.cycleBudget, () => this.request(modelCompletionUrl(this.config), {
       method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.config.apiKey}` },
       body: JSON.stringify(body),metricsCategory:compaction?'compaction':run.category, signal: AbortSignal.timeout(90000), redirect: 'error',
     })));
+    if (this.config.provider === 'custom' && response.ok && body.stream &&
+        !response.headers.get('content-type')?.includes('text/event-stream')) {
+      await response.body?.cancel();
+      return json(502, { error: { message: '自定义模型接口没有返回流式响应，请检查 API URL 和模型的流式支持' } });
+    }
     res.writeHead(response.status, { 'Content-Type': response.headers.get('content-type') || 'application/json' });
     if (!response.body) return res.end();
     await new Promise((resolve, reject) => {

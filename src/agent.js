@@ -11,6 +11,7 @@ import {addressContext} from './group-addressing.js';
 import { requestShape } from './ai-request-log.js';
 import { videoVisuals, applyMergedVideoResults } from './video-frames.js';
 import { billingRequest } from './billing.js';
+import { modelCompletionUrl } from './model-provider.js';
 import { Personality } from './personality.js';
 import { Feelings } from './feelings.js';
 import { replySummaryInstruction, unwrapReply, cleanReplySummary } from './reply-summary.js';
@@ -46,7 +47,7 @@ export class Agent {
     this.store.audit('task-input',{kind,estimated:requestShape(body),outputLimit:maxTokens});
     let text;
     if(this.runtime)text=await this.runtime.run(stableText&&images.length?payload:input,{json:true,useTools:false,systemPrompt:system,maxTokens,category:kind,images,stableText:images.length?stableText:undefined,maxImages:8,imageDetail:images.length?'low':undefined});
-    else {this.store.reserve('model',this.config.agent.maxModelCallsPerHour);const response=await this.request(this.config.baseUrl.replace(/\/$/,'')+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+this.config.apiKey},body:JSON.stringify(body),metricsCategory:kind,signal:AbortSignal.timeout(90000)});if(!response.ok)throw Error('任务请求失败 HTTP '+response.status);const choice=(await response.json()).choices?.[0];if(choice?.finish_reason==='length')throw Error('任务输出被截断，本轮停止');text=choice?.message?.content;}
+    else {this.store.reserve('model',this.config.agent.maxModelCallsPerHour);const response=await this.request(modelCompletionUrl(this.config),{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+this.config.apiKey},body:JSON.stringify(body),metricsCategory:kind,signal:AbortSignal.timeout(90000)});if(!response.ok)throw Error('任务请求失败 HTTP '+response.status);const choice=(await response.json()).choices?.[0];if(choice?.finish_reason==='length')throw Error('任务输出被截断，本轮停止');text=choice?.message?.content;}
     assertMemoryEpoch(this.store,epoch);return parseTask(text);
   }
   async planQQTurn(msg,{pictures='',energyMode='normal',qzoneRead}={}) {
@@ -104,7 +105,7 @@ export class Agent {
     const history=this.store.context(msg.session,4,1600).map(item=>{const copy=Object.defineProperties({},Object.getOwnPropertyDescriptors(item));copy.content=imageHistoryText(item.content,this.store,msg.session);return copy;});const material='# 会话历史\n'+historyMarkdown(history)+'\n# 发送者\n'+markdownData(sources)+'\n# 当前消息\n'+markdownData(input.slice(0,2400));let choice;
     for(let attempt=0;attempt<2;attempt++){
       let text;if(this.runtime){text=await this.runtime.run(protocol+'\n'+material+(attempt?'\n上次格式无效，请严格返回JSON。':''),{json:true,internal:true,maxTokens:1200});}
-      else{this.store.reserve('model',this.config.agent.maxModelCallsPerHour);const response=await this.request(this.config.baseUrl.replace(/\/$/,'')+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+this.config.apiKey},body:JSON.stringify({model:this.config.model,messages:[{role:'system',content:protocol},{role:'user',content:material}],response_format:{type:'json_object'},thinking:{type:'disabled'},max_tokens:1200,stream:false}),signal:AbortSignal.timeout(60000)});if(!response.ok)throw Error('接话判断失败 HTTP '+response.status);choice=(await response.json()).choices?.[0];text=choice?.message?.content;}
+      else{this.store.reserve('model',this.config.agent.maxModelCallsPerHour);const response=await this.request(modelCompletionUrl(this.config),{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+this.config.apiKey},body:JSON.stringify({model:this.config.model,messages:[{role:'system',content:protocol},{role:'user',content:material}],response_format:{type:'json_object'},thinking:{type:'disabled'},max_tokens:1200,stream:false}),signal:AbortSignal.timeout(60000)});if(!response.ok)throw Error('接话判断失败 HTTP '+response.status);choice=(await response.json()).choices?.[0];text=choice?.message?.content;}
       assertMemoryEpoch(this.store,epoch);try{const decision=parseReplyDecisionDetails(choice||{message:{content:text}}),result=JSON.parse(text.trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,''));this.assessmentFamilies=Array.isArray(result.capabilities)?result.capabilities.filter(x=>chatFamilies.includes(x)):null;try{this.feelings.applyChat(msg,{users:Array.isArray(result.users)?result.users:[]},'chat:'+key);}catch(e){this.store.audit('chat-analysis-rejected',{reason:e.message});}this.reportDecision(msg.session,decision.summary||'已完成合并判断','参与判断');return decision.reply;}catch(e){if(attempt)throw e;choice=null;}
     }
   }
@@ -159,7 +160,7 @@ export class Agent {
   async vision(prompt, images, maxTokens = 600) {
     this.tools.sleep?.assertAwake();
     this.store.reserve('model', this.config.agent.maxModelCallsPerHour);
-    const response = await this.request(`${this.config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+    const response = await this.request(modelCompletionUrl(this.config), {
       method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.config.apiKey}` },
       body: JSON.stringify({ model: this.config.model, stream: false, thinking: { type: 'disabled' }, max_tokens: maxTokens,
         messages: [{ role: 'user', content: [
@@ -181,7 +182,7 @@ export class Agent {
     for (let attempt = 0; attempt < 2; attempt++) {
       this.tools.sleep?.assertAwake();
       this.store.reserve('model', this.config.agent.maxModelCallsPerHour);
-      const response = await this.request(`${this.config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+      const response = await this.request(modelCompletionUrl(this.config), {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.config.apiKey}` },
         body: JSON.stringify({ model: this.config.model, stream: false, thinking: { type: 'disabled' }, max_tokens: attempt ? 512 : 256,
         response_format: { type: 'json_object' },
@@ -232,7 +233,7 @@ export class Agent {
       this.store.reserve('model', this.config.agent.maxModelCallsPerHour);
       const body = { model: this.config.model, messages, max_tokens: Math.min(this.config.agent.maxOutputTokens, options.maxTokens ?? this.config.agent.maxOutputTokens), stream: false, thinking: { type: 'disabled' } };
       if (useTools && this.tools.schemas.length) body.tools = this.tools.schemas;
-      const response = await this.request(`${this.config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+      const response = await this.request(modelCompletionUrl(this.config), {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.config.apiKey}` },
         body: JSON.stringify(body), signal: AbortSignal.timeout(90000),
       });
