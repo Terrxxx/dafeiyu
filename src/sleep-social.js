@@ -1,3 +1,6 @@
+import { withoutRepeatedQuestions, recordQuestion } from './proactive-dialogue.js';
+import { confirmedMessage } from './qq-processing.js';
+
 export function installSleepFarewell({ tools, store, qq, log, now = Date.now }) {
   const send = (chats, cycle, text) => {
     const targets = tools.sleep.data.farewellTargets ||= {};
@@ -54,11 +57,14 @@ export async function considerWakeGreeting({ tools, store, qq, agent, log, now =
     tools.sleep.assertAwake();
     const hour = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Shanghai', hour: '2-digit', hourCycle: 'h23' }).format(now()));
     if (now() - rest.wokeAt > 30 * 60000 || (/早安|早上好|早呀|早啊/.test(choice.text) && (hour < 5 || hour >= 11)) || (/刚.{0,3}(醒|起床)/.test(choice.text) && now() - rest.wokeAt > 15 * 60000)) return;
+    const text = withoutRepeatedQuestions(store, session, choice.text, { proactive: true, now: now() });
+    if (!text) return;
     await store.once(`wake-greeting:${rest.id}`, async () => {
-      tools.outgoing(false, choice.text);
-      const receipt = await qq.send(candidate.kind, candidate.target, choice.text);
-      store.recordSent(candidate.kind, candidate.target, receipt, choice.text);
-      store.appendHistory(session, 'assistant', choice.text, agent.config.agent.historyMessages);
+      tools.outgoing(false, text);
+      const receipt = await qq.send(candidate.kind, candidate.target, text);
+      if (confirmedMessage(receipt)) recordQuestion(store, session, text, now());
+      store.recordSent(candidate.kind, candidate.target, receipt, text);
+      store.appendHistory(session, 'assistant', text, agent.config.agent.historyMessages);
       return receipt;
     });
   } catch (error) { log(`醒后问候未发送或结果不明：${error.message}`); }

@@ -3,7 +3,7 @@ import {memoryEpoch,assertMemoryEpoch,userBlocked} from './user-controls.js';
 import {conversationPacket} from './context-packet.js';
 import {executeActivityActions} from './activity-cycle.js';
 import {withAICycleBudget} from './ai-cycle-budget.js';
-import {dialogueView} from './proactive-dialogue.js';
+import {recentQuestionContext} from './proactive-dialogue.js';
 
 export function eligibleSocialTargets(targets,tools,config){
   const policy=tools.qq?.policy?.()||config.qq;
@@ -38,7 +38,7 @@ export async function executeSocialTask(task,{agent,tools,store,config,log}){
     const scope=`qq:${target.kind==='private'?'user':'group'}:${target.id}`;
     const context=conversationPacket(agent,{session:scope,kind:target.kind,target:target.id,sender:target.kind==='private'?target.id:'0',text:task.prompt},{recentLimit:4,retrievalLimit:1}).text;
     if(target.kind==='private')tools.proactiveTarget=target.id;
-    const decision=await agent.taskJSON('执行你之前安排的联系事项，结合当前语境可不打扰。previousQuestions是今天问过的问题及对方后续发言，不一定完整回答；先承接回应，不再重问同一问题。仅返回 {"actions":[{"name":"qq_send_message","args":{"text":"最多80字","expectReply":false}}]}，最多1条；不再创建任务，不泄露私聊，不假装做了未执行的操作。',{task:task.prompt,target,context,previousQuestions:dialogueView(store,scope).slice(0,4)},{kind:'social',maxTokens:220});
+    const decision=await agent.taskJSON('执行你之前安排的联系事项，结合当前语境可不打扰。previousQuestions是近7天问过的问题及后续消息。先承接新内容，同一问题即使没回复也不换个说法追问。仅返回 {"actions":[{"name":"qq_send_message","args":{"text":"最多80字","expectReply":false}}]}，最多1条；不再创建任务，不泄露私聊，不假装做了未执行的操作。',{task:task.prompt,target,context,previousQuestions:recentQuestionContext(store,scope)},{kind:'social',maxTokens:220});
     const actions=decision.actions;
     if(!Array.isArray(actions)||actions.length>1||actions.some(a=>a.name!=='qq_send_message'||typeof a.args?.text!=='string'||!a.args.text.trim()||a.args.text.length>80))throw Error('定时联系行动格式错误');
     for(const action of actions)action.args={kind:target.kind,target:target.id,text:action.args.text,expectReply:action.args.expectReply===true};

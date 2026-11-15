@@ -5,7 +5,7 @@ import { memoryEpoch, assertMemoryEpoch, userBlocked } from './user-controls.js'
 import { conversationPacket } from './context-packet.js';
 import { executeActivityActions } from './activity-cycle.js';
 import {eligibleSocialTargets,socialHints,saveSocialTask} from './social-planning.js';
-import {dialogueView} from './proactive-dialogue.js';
+import {recentQuestionContext} from './proactive-dialogue.js';
 import {lifeActivities,saveSelfTask} from './life-schedule.js';
 import { restEnergy } from './sleep.js';
 import { publishQuota } from './publish-quota.js';
@@ -103,7 +103,7 @@ export async function socialCycle({agent,tools,store,config,log}) {
       const session=`qq:${target.kind==='private'?'user':'group'}:${target.id}`,latest=store.data.histories[session]?.at(-1)?.content||'';
       const sender=target.kind==='private'?target.id:latest.match(/[（(](\d+)[）)][:：]/)?.[1]||'0';
       const query=latest.replace(/^[^\n]{1,80}?[（(]\d+[）)][:：]/,'');
-      material={context:conversationPacket(agent,{kind:target.kind,session,target:target.id,sender,text:query},{recentLimit:4,retrievalLimit:1}).text,previousQuestions:dialogueView(store,session).slice(0,4)};
+      material={context:conversationPacket(agent,{kind:target.kind,session,target:target.id,sender,text:query},{recentLimit:4,retrievalLimit:1}).text,previousQuestions:recentQuestionContext(store,session)};
       if(target.kind==='private'){
         if(target.followup){const u=f.user(target.id);u.followup.checked=true;f.store.save();tools.followupTarget={id:target.id,sentAt:u.followup.sentAt};material.pendingQuestion=u.followup.question;}
         tools.proactiveTarget=target.id;
@@ -111,7 +111,7 @@ export async function socialCycle({agent,tools,store,config,log}) {
       allowed=plan.activity==='task'?[]:['qq_send_message'];
     }
     const canSchedule=!!tools.tasks&&target.canChat&&plan.activity!=='space'&&!target.followup&&pending<TASK_LIMIT;
-    const decision=await agent.taskJSON('依据当前对象的资料决定是否行动，可actions为空。附图序号对应post.imageNumbers，只描述确实看见的画面，没读到的图片不能猜。可以自己开一个轻松短话题，不必总是问候或等对方先开口，不抄其他会话。previousQuestions是近期问过的问题与对方后续发言，先接着对方的话聊，不把已聊过的日常或进度问题重新问一遍；没有新话题可以不发。只返回 {"actions":[{"name":"允许行为","args":{}}],"task":{"prompt":"可选：稍后联系此对象的具体事项，最多200字","delayMinutes":30}}。task可省略；仅canSchedule为true时可安排10分钟至7天后的联系，不能安排泛泛自主任务、递归任务或机械催回复；不必每轮安排。最多2项即时行动，QQ最多1条80字短句；不泄露私聊、不催促施压、不编经历。QQ参数kind,target,text,expectReply；空间点赞postRef；评论postRef,text；回复commentRef,text。',{target,activity:plan.activity,allowed,canSchedule,...material},{kind:'social',maxTokens:450,images:spaceImages});
+    const decision=await agent.taskJSON('依据当前对象的资料决定是否行动，可actions为空。附图序号对应post.imageNumbers，只描述确实看见的画面，没读到的图片不能猜。可以随口分享一句，也可以开启具体的新话题，不靠提问维持聊天。previousQuestions是近7天问过的问题与后续消息；不论有没有回复，都不要换个说法再问。没有新内容可以不发。只返回 {"actions":[{"name":"允许行为","args":{}}],"task":{"prompt":"可选：稍后联系此对象的具体事项，最多200字","delayMinutes":30}}。task可省略；仅canSchedule为true时可安排10分钟至7天后的联系，不能安排泛泛自主任务、递归任务或机械催回复；不必每轮安排。最多2项即时行动，QQ最多1条80字短句；不泄露私聊、不催促施压、不编经历。QQ参数kind,target,text,expectReply；空间点赞postRef；评论postRef,text；回复commentRef,text。',{target,activity:plan.activity,allowed,canSchedule,...material},{kind:'social',maxTokens:450,images:spaceImages});
     if(!Array.isArray(decision.actions)||decision.actions.length>2||decision.actions.filter(a=>a.name==='qq_send_message').length>1||decision.actions.some(a=>a.name==='qq_send_message'&&(typeof a.args?.text!=='string'||a.args.text.length>80)))throw Error('社交行动格式无效');
     for(const action of decision.actions)if(action.name==='qq_send_message')action.args={kind:target.kind,target:target.id,text:action.args.text,expectReply:action.args.expectReply===true};
     const results=await executeActivityActions({decision,allowed,tools,store,epoch,targets:[target],log});

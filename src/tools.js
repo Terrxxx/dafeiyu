@@ -1,6 +1,6 @@
 import { imageDescription, imageSendResult, mediaReceipt } from './image-description.js';
 import {publicationImages} from './social-image-assets.js';
-import {assertFreshQuestion,recordProactiveQuestion} from './proactive-dialogue.js';
+import { withoutRepeatedQuestions, recordQuestion } from './proactive-dialogue.js';
 import{biliFlags,toolContextAllowed}from'./tool-availability.js';
 import{chatToolAllowed}from'./tool-routing.js';
 import {checkBalance} from './api-balance.js';
@@ -132,7 +132,18 @@ export class SocialTools {
       if (['qq_send_image', 'qq_send_sticker'].includes(name)) this.currentMediaAttempted = true;
     }
     this.operationEpoch = memoryEpoch(this.store);
-    try {const result=await this.callChecked(name,args);if(reply&&confirmedMessage(result?.[mediaReceipt]||result))messageStage(this.store,this.current,'replied');if(this.current&&args?.kind==='group'&&['qq_send_image','qq_send_voice','qq_send_sticker'].includes(name)&&confirmedMessage(result?.[mediaReceipt]||result))(this.crossSendConfirmed||=[]).push({kind:'group',target:String(args.target)});return result;}
+    try {
+      const result = await this.callChecked(name, args);
+      const confirmed = confirmedMessage(result?.[mediaReceipt] || result);
+      if (reply && confirmed) messageStage(this.store, this.current, 'replied');
+      else if (reply && result?.repeatedQuestion && !this.store.qqProcessing?.get(this.current)?.confirmed) {
+        messageStage(this.store, this.current, 'silent');
+      }
+      if (this.current && args?.kind === 'group' && ['qq_send_image', 'qq_send_voice', 'qq_send_sticker'].includes(name) && confirmed) {
+        (this.crossSendConfirmed ||= []).push({ kind: 'group', target: String(args.target) });
+      }
+      return result;
+    }
     catch(error){if(reply)this.store.qqProcessing?.fail(this.current,error);throw error;}
     finally { this.operationEpoch = null; }
   }
@@ -196,12 +207,24 @@ export class SocialTools {
     const proactive = !this.current && ['autonomous-social', 'autonomous-browse', 'autonomous-contact', 'autonomous-shopping'].includes(this.scope);
     const privateSend = ['qq_send_message', 'qq_send_sticker', 'qq_send_image', 'qq_send_voice'].includes(name) && args.kind === 'private';
     if (proactive && privateSend && !this.followupTarget && !this.feelings.canContact(String(args.target), this.config.social?.contactCooldownMinutes ?? 180)) throw new Error('暂不主动联系：用户要求暂停、尚未回复、正在聊天或仍在冷却期');
-    if(proactive&&name==='qq_send_message')assertFreshQuestion(this.store,`qq:${args.kind==='private'?'user':'group'}:${args.target}`,args.text);
+    const textRecipient = name === 'qq_reply_current' ? this.current :
+      ['qq_send_message', 'qq_send_voice'].includes(name) ? args : null;
+    const questionScope = textRecipient && ['private', 'group'].includes(textRecipient.kind) &&
+      /^[1-9]\d*$/.test(String(textRecipient.target)) ?
+      `qq:${textRecipient.kind === 'private' ? 'user' : 'group'}:${textRecipient.target}` : null;
+    if (questionScope) {
+      const text = withoutRepeatedQuestions(this.store, questionScope, args.text, { proactive: !this.current });
+      if (text !== args.text) {
+        this.store.audit('qq-repeat-question', { scope: questionScope, skipped: !text });
+        if (!text) return { skipped: true, repeatedQuestion: true, reason: '相近问题已经问过，本次保持安静' };
+        args = { ...args, text, expectReply: false };
+      }
+    }
     try {
       const result = await this.execute(name, args);
       if (result?.skipped || result?.alreadyLiked) return result;
       const receipt=result?.[mediaReceipt]||result;
-      if(proactive&&name==='qq_send_message')recordProactiveQuestion(this.store,`qq:${args.kind==='private'?'user':'group'}:${args.target}`,args.text);
+      if (questionScope && confirmedMessage(receipt)) recordQuestion(this.store, questionScope, args.text);
       if (['qq_send_message', 'qq_send_image', 'qq_send_voice', 'qq_send_sticker', 'qq_reply_current'].includes(name)) {
         const recipient = name === 'qq_reply_current' ? this.current : args;
         this.store.recordSent(recipient.kind, recipient.target, receipt, args.text || `[${name}]`);

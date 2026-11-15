@@ -7,6 +7,7 @@ import { filterUserMessage, acceptedSource, memoryEpoch } from './user-controls.
 import { canOperateQQ, incomingAllowed } from './qq-policy.js';
 import { publicationIntent } from './publication-turn.js';
 import { qqIdentityReply, qqSenderRoles } from './person-identity.js';
+import { withoutRepeatedQuestions, recordQuestion } from './proactive-dialogue.js';
 import { mergeMessages } from './message-buffer.js';
 import { handlePlannedQQ } from './qq-turn.js';
 import { measureModelTurn } from './turn-meter.js';
@@ -101,13 +102,19 @@ async function handleQQMessageImpl(msg, key, { agent, store, tools, qq, throttle
   tools.chatFamilies=agent.assessmentFamilies||null;
   const stickers = (tools.media?.stickers?.(6) || (tools.media?.list(msg.session) || []).filter(image => image.savedSticker).slice(-6))
     .map(image => ({ imageId: image.id, ...(image.description ? {description: image.description} : {}) }));
-  const text = await agent.run(msg.session, qqReplyInput(msg, { qq: policy }, stickers, pictures, energyMode), energyMode !== 'fog', { remember: false, skipLast: true, replySummary: true });
+  const raw = await agent.run(msg.session, qqReplyInput(msg, { qq: policy }, stickers, pictures, energyMode), energyMode !== 'fog', { remember: false, skipLast: true, replySummary: true });
+  const text = withoutRepeatedQuestions(store, msg.session, raw);
   if ((msg.sources || [msg]).some(source => !incomingAllowed(qq.policy?.() || agent.config?.qq || {}, msg.kind, msg.target, source.sender))) return;
   if ((msg.sources || [msg]).some(source => !acceptedSource(store, source, msg.receivedAt))) return;
+  if (!text?.trim() && raw?.trim()) {
+    if (!tools.currentAttempted) messageStage(store,msg,'silent');
+    return;
+  }
   if (!tools.currentAttempted || tools.currentMediaAttempted && !tools.currentTextAttempted && text.trim()) await store.once(key, async () => {
     tools.outgoing(false, text);
     messageStage(store,msg,'sending');
     const receipt = await qq.send(msg.kind, msg.target, text);
+    if (confirmedMessage(receipt)) recordQuestion(store, msg.session, text);
     messageStage(store,msg,confirmedMessage(receipt)?'replied':'uncertain');
     store.recordSent(msg.kind, msg.target, receipt, text);
     store.appendHistory(msg.session, 'assistant', text, agent.config?.agent.historyMessages);
