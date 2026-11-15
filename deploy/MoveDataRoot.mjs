@@ -5,7 +5,7 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {DatabaseSync} from 'node:sqlite';
 const exec=promisify(execFile),ROOT='/opt/dafeiyu',OLD='/data',TARGET=ROOT+'/data',BACKUP=ROOT+'/backups/data-root-20261027';
-const files=['manager/server.js','manager/tenants.js','deploy/tenant-helper.mjs','deploy/dafeiyu-manager.service','deploy/dafeiyu-runtime.service','deploy/CheckMultiUser.mjs','deploy/CheckPublicUI.mjs','deploy/MigrateMultiUser.mjs','src/main.js','MULTIUSER.md'];
+const files=['manager/server.js','manager/tenants.js','deploy/tenant-helper.mjs','deploy/dafeiyu-manager.service','deploy/dafeiyu-runtime.service','deploy/CheckMultiUser.mjs','deploy/CheckPublicUI.mjs','deploy/MigrateMultiUser.mjs','src/main.js','docs/archive/MULTIUSER.md'];
 const sha=file=>new Promise((resolve,reject)=>{const digest=createHash('sha256'),stream=fs.createReadStream(file);stream.on('data',chunk=>digest.update(chunk));stream.on('error',reject);stream.on('end',()=>resolve(digest.digest('hex')));});
 const command=async(program,args,options={})=>(await exec(program,args,{timeout:180000,maxBuffer:2*1024*1024,...options})).stdout;
 const journal={phase:'preflight',source:OLD,target:TARGET,startedAt:new Date().toISOString()};
@@ -51,7 +51,7 @@ try{
  for(const relative of ['deploy/dafeiyu-manager.service','deploy/dafeiyu-runtime.service'])edit(relative,text=>text.replaceAll('=/data','=/opt/dafeiyu/data'));
  for(const relative of ['deploy/CheckMultiUser.mjs','deploy/CheckPublicUI.mjs'])edit(relative,text=>text.replaceAll("'/data/","'/opt/dafeiyu/data/"));
  edit('deploy/MigrateMultiUser.mjs',text=>text.replace("if(fs.existsSync('/data/.platform/migration-complete.json'))","if(fs.existsSync('/data/.platform/migration-complete.json')||fs.existsSync(ROOT+'/data/.platform/migration-complete.json'))"));
- edit('MULTIUSER.md',text=>text.replaceAll('`/data/','`/opt/dafeiyu/data/').replace('旧 `/opt/dafeiyu/data`、QQ缓存和Harness home暂时保留为停止更新的回退副本，不是活跃用户目录。','旧版项目data目录已归档到本次路径迁移备份的legacy-project-data中；当前项目data目录用于多用户活跃数据。'));
+ edit('docs/archive/MULTIUSER.md',text=>text.replaceAll('`/data/','`/opt/dafeiyu/data/').replace('旧 `/opt/dafeiyu/data`、QQ缓存和Harness home暂时保留为停止更新的回退副本，不是活跃用户目录。','旧版项目data目录已归档到本次路径迁移备份的legacy-project-data中；当前项目data目录用于多用户活跃数据。'));
  for(const relative of ['deploy/tenant-helper.mjs','manager/server.js','manager/tenants.js','src/main.js'])await command('/usr/local/bin/dafeiyu-node',['--check',ROOT+'/'+relative]);
  for(const unit of ['dafeiyu-manager.service','dafeiyu-runtime.service'])await command('install',['-o','root','-g','root','-m','644',ROOT+'/deploy/'+unit,'/etc/systemd/system/'+unit]);
  await command('install',['-o','root','-g','root','-m','644',ROOT+'/deploy/tenant-helper.mjs','/usr/local/lib/dafeiyu-tenant-helper.mjs']);
