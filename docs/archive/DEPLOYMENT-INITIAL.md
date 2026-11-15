@@ -1,4 +1,4 @@
-# NAS 部署记录
+# 服务器 部署记录
 
 - 服务器：`192.168.1.149`，Debian 13 amd64
 - 项目目录：`/opt/dafeiyu/`
@@ -15,7 +15,7 @@ sudo journalctl -u dafeiyu -f
 cd /opt/dafeiyu && sudo docker compose ps
 ```
 
-面板中的“停止/启动”控制社交后台，面板本身保持可用。`systemctl stop dafeiyu` 会连面板一起关闭。电脑原目录保留，但不要与 NAS 同时运行 `start.cmd`，以免双实例收发和记忆分叉。
+面板中的“停止/启动”控制社交后台，面板本身保持可用。`systemctl stop dafeiyu` 会连面板一起关闭。电脑原目录保留，但不要与 服务器 同时运行 `start.cmd`，以免双实例收发和记忆分叉。
 
 ## 数据与验收
 
@@ -25,10 +25,10 @@ cd /opt/dafeiyu && sudo docker compose ps
 - `deploy-payload.tar.gz`：原始可迁移源码、配置、密钥、业务数据、模型和 Harness 会话
 - `source-manifest.json`、`verification.json`：8,417 个文件 SHA256 全部匹配，零差异
 - `final-check.json`：管理入口、认证、来源保护与用户记忆检查
-- `linux-tests.log`：NAS 上 42 项回归通过
+- `linux-tests.log`：服务器 上 42 项回归通过
 
-原有 29 位用户资料已保留。声音仍使用 Kokoro `zf_017`，Linux 实测 24000 Hz；Chromium、真实 Harness SDK/模型和 B站登录均已通过验收。Windows 依赖没有当作 Linux 依赖运行，原件完整保留在备份中。浏览器路径设为 `/usr/bin/chromium`；Windows 专属桌面组件在 NAS 上关闭。
+原有 29 位用户资料已保留。声音仍使用 Kokoro `zf_017`，Linux 实测 24000 Hz；Chromium、真实 Harness SDK/模型和 B站登录均已通过验收。Windows 依赖没有当作 Linux 依赖运行，原件完整保留在备份中。浏览器路径设为 `/usr/bin/chromium`；Windows 专属桌面组件在 服务器 上关闭。
 
-活跃数据位于 `data/`，Harness 会话及附件位于 `harness-runtime/home/`。服务器特有的端口、浏览器和认证配置在初次部署时生成，原 `.env` 与配置同时保留在迁移备份中。源码更新后需同步到 NAS 并重启服务，本地修改不会自动发布。
+活跃数据位于 `data/`，Harness 会话及附件位于 `harness-runtime/home/`。服务器特有的端口、浏览器和认证配置在初次部署时生成，原 `.env` 与配置同时保留在迁移备份中。源码更新后需同步到 服务器 并重启服务，本地修改不会自动发布。
 
-回迁前先停止服务器后台并备份 **NAS 最新数据**，再回迁 `data/`、配置及 Harness 会话；不能直接用迁移前电脑快照代替服务器后来产生的记忆。恢复时应先恢复到新目录核验，保留现有目录与备份，确认只有一个实例运行。
+回迁前先停止服务器后台并备份 **服务器 最新数据**，再回迁 `data/`、配置及 Harness 会话；不能直接用迁移前电脑快照代替服务器后来产生的记忆。恢复时应先恢复到新目录核验，保留现有目录与备份，确认只有一个实例运行。

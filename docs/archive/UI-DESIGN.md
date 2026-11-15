@@ -31,7 +31,7 @@
 
 公网Windows配置候选：`conf/nginx-dafeiyu-candidate.conf`，新增站点：`conf/dafeiyu-site.conf`。由站点所有者执行同目录 `Apply-Dafeiyu.ps1`：先比对现用主配置哈希，再执行 `nginx -t`，通过后备份、替换并重载。
 
-NAS现有18001隧道已转接Nginx域名路由：`fig.home.yrxs.net`仍转至8001，大肥鱼域名转至13082。Cloudreve的15212隧道保持原目标。旧隧道服务配置备份在本次备份目录，原有公网服务检查为ShowBanWeb 401、Cloudreve 200。
+服务器现有18001隧道已转接Nginx域名路由：`fig.home.yrxs.net`仍转至8001，大肥鱼域名转至13082。Cloudreve的15212隧道保持原目标。旧隧道服务配置备份在本次备份目录，原有公网服务检查为ShowBanWeb 401、Cloudreve 200。
 
 公网启用已完成：https://dafeiyu.yrxs.net/ 。证书验证、受保护页面跳转、登录后页面、选项卡、跨站校验与Secure Cookie均通过；结果保存在本次备份目录的 public-verification.json。
 

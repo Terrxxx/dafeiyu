@@ -9,7 +9,7 @@ npm test
 npm run build:web
 ~~~
 
-Windows PowerShell 可以调用 `npm.cmd`。`npm start` 启动多用户账户服务，完整的 QQ 容器与后台运行环境依赖部署服务。`npm run dev:web` 启动前端开发服务器。Harness 的依赖独立放在 `harness-runtime/`，相关集成测试会根据该依赖是否安装决定是否执行。 [部署说明](deployment.md)
+在 Windows 上，仓库里的 `start.cmd` 显示服务器入口。Windows PowerShell 可以调用 `npm.cmd`。`npm start` 启动多用户账户服务，完整的 QQ 容器与后台运行环境依赖部署服务。`npm run dev:web` 启动前端开发服务器。Harness 的依赖独立放在 `harness-runtime/`，相关集成测试会根据该依赖是否安装决定是否执行。 [部署说明](deployment.md)
 
 开发时可参考 [配置示例](../config.example.json)、[环境变量示例](../.env.example) 和 [默认人格提示词](../persona.md)。实际 API Key、登录凭据和运行数据应保存在 Git 忽略的本地配置与数据目录内。
 

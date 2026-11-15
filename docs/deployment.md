@@ -13,7 +13,7 @@
 
 ## 数据和备份
 
-现有 NAS 部署位于 `/opt/dafeiyu/`。各实例的数据放在 `data/{username}/`，站点账户数据库和加密主密钥放在 `data/.platform/`。备份应包含整个 `data/`，并保存对应代码版本与部署配置。制作一致性备份前应暂停服务及写入数据的用户容器。恢复时核对文件权限、数据库和凭据，再启动服务。
+部署文件使用 `/opt/dafeiyu/` 作为项目目录。各实例的数据放在 `data/{username}/`，站点账户数据库和加密主密钥放在 `data/.platform/`。备份应包含整个 `data/`，并保存对应代码版本与部署配置。制作一致性备份前应暂停服务及写入数据的用户容器。恢复时核对文件权限、数据库和凭据，再启动服务。
 
 ~~~sh
 systemctl status dafeiyu-manager dafeiyu-runtime
@@ -21,6 +21,6 @@ journalctl -u dafeiyu-manager -u dafeiyu-runtime -n 100 --no-pager
 ~~~
 
 - [多用户部署与迁移记录](archive/MULTIUSER.md)
-- [旧版 NAS 部署记录](archive/DEPLOYMENT.md)
+- [旧版服务器部署记录](archive/DEPLOYMENT.md)
 - [初次部署记录](archive/DEPLOYMENT-INITIAL.md)
 - [QQ 网络出口记录](archive/QQ-EGRESS.md)

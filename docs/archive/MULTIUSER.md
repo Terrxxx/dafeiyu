@@ -1,6 +1,6 @@
 # 大肥鱼多用户服务
 
-代码位于 `/opt/dafeiyu/`，活跃数据位于 `/opt/dafeiyu/data/{username}/`。当前内网入口为 http://192.168.1.149:3081/，预留公网来源为 https://dafeiyu.yrxs.net 。公网 https://dafeiyu.yrxs.net/ 已启用并验证，站点所有者已执行 Windows Nginx 测试和重载。现有18001隧道通过 NAS Nginx 按域名分流，原 ShowBanWeb 与 Cloudreve 入口已复核正常。
+代码位于 `/opt/dafeiyu/`，活跃数据位于 `/opt/dafeiyu/data/{username}/`。当前内网入口为 http://192.168.1.149:3081/，预留公网来源为 https://dafeiyu.yrxs.net 。公网 https://dafeiyu.yrxs.net/ 已启用并验证，站点所有者已执行 Windows Nginx 测试和重载。现有18001隧道通过 服务器 Nginx 按域名分流，原 ShowBanWeb 与 Cloudreve 入口已复核正常。
 
 ## 第一次进入
 
@@ -38,7 +38,7 @@ API余额通过 [DeepSeek 官方接口](https://api-docs.deepseek.com/api/get-us
 
 ## 公网入口对接
 
-Windows HTTPS反向代理需保留 `Host: dafeiyu.yrxs.net`、浏览器原始 `Origin`，并设置 `X-Forwarded-Proto: https`。NAS 3081反代会继续传给账户服务，HTTPS会话使用Secure Cookie。不要把13082、Docker socket或各用户NapCat WebUI端口直接公开。
+Windows HTTPS反向代理需保留 `Host: dafeiyu.yrxs.net`、浏览器原始 `Origin`，并设置 `X-Forwarded-Proto: https`。服务器 3081反代会继续传给账户服务，HTTPS会话使用Secure Cookie。不要把13082、Docker socket或各用户NapCat WebUI端口直接公开。
 
 目前允许的来源在 `deploy/dafeiyu-manager.service` 的 `DAFEIYU_ORIGINS` 中；修改域名时同时更新实际systemd配置，重载并重启管理器。公网示例见 `deploy/nginx-public.example.conf`，隧道端口和证书路径需要按实际值替换。
 

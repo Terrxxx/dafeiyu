@@ -4,6 +4,8 @@
 
 ## 模型供应商
 
+在「密钥与安全 → 模型凭据」选择供应商，填写相应的 API Key。保存后重新启动大肥鱼。
+
 默认供应商为 DeepSeek。自定义供应商须支持 OpenAI 兼容的 Chat Completions 接口和流式响应。只填 HTTPS 域名时，程序会请求 `/v1/chat/completions`。供应商使用其他前缀时，请填 API 基址或完整的 Chat Completions 端点。
 
 - DeepSeek 余额在控制台显示。余额不足时程序会停止实例，充值后可重新启动。
