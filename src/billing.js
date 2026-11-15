@@ -9,13 +9,41 @@ import { startTurnRequest } from './turn-meter.js';
 import { reserveAICycle } from './ai-cycle-budget.js';
 import { modelRequest } from './model-provider.js';
 let blocked = false;
+const providerBackoffs = new WeakMap();
+
+function retryDelay(header, at) {
+  if (!header) return 0;
+  const delay = /^\d+$/.test(header) ? Number(header) * 1000 : Date.parse(header) - at;
+  return Number.isFinite(delay) ? Math.max(0, Math.min(delay, 300_000)) : 0;
+}
+
+function providerPause(state, at, reason, retryAfter, status = 429) {
+  state.reason = reason;
+  if (retryAfter !== undefined) {
+    state.failures = Math.min(state.failures + 1, 5);
+    const delay = Math.min(60_000, 5000 * 2 ** (state.failures - 1));
+    state.until = Math.max(state.until, at + Math.max(delay, retryDelay(retryAfter, at)));
+  }
+  const seconds = Math.max(1, Math.ceil((state.until - at) / 1000));
+  return Response.json({ error: { message: `${state.reason}，约 ${seconds} 秒后可再试` } }, {
+    status, headers: { 'Retry-After': String(seconds) },
+  });
+}
 
 export function billingRequest(request, context) {
-  const budget = context?.store?.file ? new DailyBudget(context.config, context.store) : null;
+  const now = context?.now || Date.now;
+  const budget = context?.store?.file ? new DailyBudget(context.config, context.store, now) : null;
+  const store = context?.store;
+  let backoff = null;
+  if (context?.config?.provider === 'custom') {
+    backoff = (store && providerBackoffs.get(store)) || { failures: 0, until: 0 };
+    if (store) providerBackoffs.set(store, backoff);
+  }
   return async (url, options = {}) => {
     if (process.env.DAFEIYU_MANAGED && blocked) throw Error('API余额不足，服务已停止');
     budget?.assert();
-    const started = Date.now(), category = options.metricsCategory;
+    const started = now(), category = options.metricsCategory;
+    if (backoff && started < backoff.until) return providerPause(backoff, started, backoff.reason);
     options = { ...options };
     delete options.metricsCategory;
     let body;
@@ -38,7 +66,12 @@ export function billingRequest(request, context) {
     };
     let response;
     try { response = await modelRequest(request, context?.config, url, options); }
-    catch (error) { finish(undefined, '请求失败'); throw error; }
+    catch (error) {
+      const timeout = error?.name === 'TimeoutError' || options.signal?.reason?.name === 'TimeoutError';
+      finish(undefined, timeout ? '供应商请求超时' : '请求失败');
+      if (backoff && timeout) return providerPause(backoff, now(), '自定义供应商请求超时', null, 504);
+      throw error;
+    }
     if (process.env.DAFEIYU_MANAGED && response.status === 402) {
       blocked = true;
       fs.mkdirSync(DATA_ROOT, { recursive: true });
@@ -49,7 +82,15 @@ export function billingRequest(request, context) {
       report(undefined, `失败 HTTP ${response.status}`);
       reportTurn();
       budget?.cancel(requestId);
+      if (backoff && response.status === 429) {
+        await response.body?.cancel();
+        return providerPause(backoff, now(), '自定义供应商繁忙或限流', response.headers.get('retry-after'));
+      }
       return response;
+    }
+    if (backoff && started >= backoff.until) {
+      backoff.failures = 0;
+      backoff.until = 0;
     }
     if (typeof response.clone !== 'function') {
       const original = response.json.bind(response);
