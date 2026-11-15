@@ -294,8 +294,21 @@ function DailyChart({ days, metric, activeDate, onActiveChange }) {
 }
 export default function UsageChart({ usage }) {
   const [range, setRange] = useState(30),
+    [providerId, setProviderId] = useState(""),
     [activeDate, setActiveDate] = useState(null);
-  const days = (usage.daily || []).slice(-range);
+  const providers = usage.providers || [];
+  const provider = providers.find((item) => item.id === providerId);
+  const days = (usage.daily || []).slice(-range).map((day) =>
+    provider
+      ? {
+          date: day.date,
+          tokens: day.providers?.[provider.id]?.tokens || 0,
+          requests: day.providers?.[provider.id]?.requests || 0,
+          missingUsage: !!day.providers?.[provider.id]?.missingUsage,
+          recorded: day.date >= provider.since,
+        }
+      : day,
+  );
   if (!days.length)
     return <p className="muted">每日统计将在服务更新后显示。</p>;
   return (
@@ -307,22 +320,38 @@ export default function UsageChart({ usage }) {
             {days[0].date} — {days.at(-1).date} · 北京时间
           </p>
         </div>
-        <label className="daily-range">
-          <span>时间范围</span>
-          <select
-            aria-label="用量时间范围"
-            value={range}
-            onChange={(event) => {
-              setRange(Number(event.target.value));
-              setActiveDate(null);
-            }}
-          >
-            <option value={7}>近 7 天</option>
-            <option value={30}>近 30 天</option>
-          </select>
-        </label>
+        <div className="daily-filters">
+          <label className="daily-range">
+            <span>供应商</span>
+            <select
+              aria-label="用量供应商"
+              value={provider?.id || ""}
+              onChange={(event) => {
+                setProviderId(event.target.value);
+                setActiveDate(null);
+              }}
+            >
+              <option value="">全部供应商</option>
+              {providers.map(({ id, name }) => <option key={id} value={id}>{name}</option>)}
+            </select>
+          </label>
+          <label className="daily-range">
+            <span>时间范围</span>
+            <select
+              aria-label="用量时间范围"
+              value={range}
+              onChange={(event) => {
+                setRange(Number(event.target.value));
+                setActiveDate(null);
+              }}
+            >
+              <option value={7}>近 7 天</option>
+              <option value={30}>近 30 天</option>
+            </select>
+          </label>
+        </div>
       </div>
-      <div className="usage-dual-charts">
+      <div key={provider?.id || "all"} className="usage-dual-charts">
         <DailyChart
           days={days}
           metric="tokens"

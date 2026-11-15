@@ -1,4 +1,4 @@
-import{initializeAnalytics,recordAnalytics,usageCategory}from'./usage-analytics.js';
+import { expenseSamples, recordAnalytics, usageCategory, usageProvider } from './usage-analytics.js';
 import{randomUUID}from'node:crypto';const BOOT=randomUUID();
 import fs from 'node:fs';import path from 'node:path';import{atomicWriteFile}from'./atomic-file.js';
 export const pricingSource='https://api-docs.deepseek.com/zh-cn/quick_start/pricing/';
@@ -23,7 +23,8 @@ export function dailyStatus(directory, config = {}, at = Date.now()) {
   reasons.push('此模型没有已核实的人民币单价');
  }
  return {
-  day, ...usage, missingUsage: !!(usage.missingUsage || usage.missingCustomUsage),
+  day, tokens: usage.tokens, requests: usage.requests, estimatedCny: usage.estimatedCny,
+  missingUsage: !!(usage.missingUsage || usage.missingCustomUsage),
   pendingRequests: Object.values(ledger.pending || {}).filter(item => beijingDay(item.at) === day).length,
   limits, limitsSuspended, paused: reasons.length > 0, reasons,
   resumesAt: new Date(Date.parse(day + 'T00:00:00+08:00') + 86400000).toISOString(),
@@ -36,7 +37,56 @@ export class DailyBudget{
  write(ledger){atomicWriteFile(this.file,JSON.stringify(ledger));}
  status(){return dailyStatus(this.directory,this.config,this.now());}
  assert(){const s=this.status();if(s.paused)throw Object.assign(Error(s.reasons.join('；')+'，北京时间次日00:00恢复'),{code:'DAILY_LIMIT'});}
- begin(at=this.now(),category=usageCategory()){this.assert();const ledger=this.read(),id=randomUUID();ledger.pending||={};ledger.pending[id]={at,boot:this.boot,category,provider:this.config.provider||'deepseek'};this.write(ledger);return id;}
+ begin(at = this.now(), category = usageCategory()) {
+  this.assert();
+  const ledger = this.read(), id = randomUUID();
+  ledger.pending ||= {};
+  ledger.pending[id] = {
+   at, boot: this.boot, category, provider: this.config.provider || 'deepseek', providerId: usageProvider(this.config),
+  };
+  this.write(ledger);
+  return id;
+ }
  cancel(id){const ledger=this.read();if(ledger.pending)delete ledger.pending[id];this.write(ledger);}
- record(usage,at=this.now(),requestId){const ledger=this.read(),day=beijingDay(at);initializeAnalytics(ledger,at);const pending=ledger.pending?.[requestId];const category=pending?.category||usageCategory();const custom=(pending?.provider??this.config.provider)==='custom';recordAnalytics(ledger,usage,at,category);const u=ledger.days[day]||{tokens:0,estimatedCny:0,requests:0,missingUsage:false};const input=usage?.prompt_tokens??usage?.input_tokens,output=usage?.completion_tokens??usage?.output_tokens;const total=usage?.total_tokens??(Number(input)+Number(output));const valid=Number.isFinite(total)&&total>=0&&Number.isFinite(input)&&Number.isFinite(output);const cost=usage&&!custom?estimateCost(this.config.model||'deepseek-flash',usage,at):null;u.requests++;if(valid)u.tokens+=total;else if(custom)u.missingCustomUsage=true;else u.missingUsage=true;if(cost!==null)u.estimatedCny=Number((u.estimatedCny+cost).toFixed(12));else if(!custom&&this.status().limits.costEnabled)u.missingUsage=true;ledger.days[day]=u;if(requestId&&ledger.pending)delete ledger.pending[requestId];for(const key of Object.keys(ledger.days).sort().slice(0,-32))delete ledger.days[key];this.write(ledger);}
+ record(usage, at = this.now(), requestId) {
+  const ledger = this.read(), day = beijingDay(at);
+  const pending = ledger.pending?.[requestId];
+  const custom = (pending?.provider ?? this.config.provider) === 'custom';
+  const provider = pending ? pending.providerId || 'unknown' : usageProvider(this.config);
+  recordAnalytics(ledger, usage, at, pending?.category || usageCategory());
+  const entry = ledger.days[day] || { tokens: 0, estimatedCny: 0, requests: 0, missingUsage: false };
+  const input = usage?.prompt_tokens ?? usage?.input_tokens;
+  const output = usage?.completion_tokens ?? usage?.output_tokens;
+  const total = usage?.total_tokens ?? (Number(input) + Number(output));
+  const valid = Number.isFinite(total) && total >= 0 && Number.isFinite(input) && Number.isFinite(output);
+  const cost = usage && !custom ? estimateCost(this.config.model || 'deepseek-flash', usage, at) : null;
+  if (!entry.providers) {
+   entry.legacyMissingUsage = !!(entry.missingUsage || entry.missingCustomUsage);
+   entry.providers = {};
+  }
+  const group = entry.providers[provider] ||= { tokens: 0, requests: 0, missingUsage: false };
+  group.requests++;
+  if (valid) group.tokens += total;
+  else group.missingUsage = true;
+  entry.requests++;
+  if (valid) entry.tokens += total;
+  else if (custom) entry.missingCustomUsage = true;
+  else entry.missingUsage = true;
+  if (cost !== null) {
+   entry.costSamples = expenseSamples(entry) + 1;
+   entry.estimatedCny = Number(((entry.estimatedCny || 0) + cost).toFixed(12));
+  } else if (!custom && this.status().limits.costEnabled) entry.missingUsage = true;
+  ledger.days[day] = entry;
+  if (requestId && ledger.pending) delete ledger.pending[requestId];
+  for (const key of Object.keys(ledger.days).sort().slice(0, -32)) {
+   const expired = ledger.days[key];
+   if (expenseSamples(expired)) {
+    const archived = ledger.analytics.archivedExpenses ||= { cny: 0, samples: 0 };
+    archived.cny = Number((archived.cny + (Number(expired.estimatedCny) || 0)).toFixed(12));
+    archived.samples += expenseSamples(expired);
+   }
+   delete ledger.days[key];
+  }
+  this.write(ledger);
+ }
 }

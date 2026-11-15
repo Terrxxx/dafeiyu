@@ -6,6 +6,66 @@ const beijingDay = (at) =>
   new Date(at + 8 * 3600000).toISOString().slice(0, 10);
 const context = new AsyncLocalStorage();
 export const usageCategory = () => context.getStore() || "other";
+export function usageProvider({ provider, baseUrl }) {
+  if (provider !== "custom") return "deepseek";
+  return URL.canParse(baseUrl) ? "custom:" + new URL(baseUrl).host : "custom";
+}
+
+export function expenseSamples(day) {
+  return day.costSamples ?? (day.estimatedCny > 0 ? 1 : 0);
+}
+
+function expenseRanges(ledger, today, dayStart) {
+  const days = Object.entries(ledger.days || {}).filter(([date]) => date <= today);
+  return Object.fromEntries(Object.entries({ today: 1, threeDays: 3, sevenDays: 7, month: 30, all: null })
+    .map(([key, length]) => {
+      const from = length ? beijingDay(dayStart - (length - 1) * 86400000) : null;
+      const archived = length === null ? ledger.analytics.archivedExpenses : null;
+      let cny = archived?.cny || 0;
+      let samples = archived?.samples || 0;
+      for (const [date, day] of days) {
+        if (from && date < from) continue;
+        cny += Number(day.estimatedCny) || 0;
+        samples += expenseSamples(day);
+      }
+      return [key, { cny: samples ? Number(cny.toFixed(12)) : null, from, to: today }];
+    }));
+}
+
+function dailyUsage(ledger, dayStart) {
+  const providers = new Map();
+  const days = Array.from({ length: 30 }, (_, index) => {
+    const date = beijingDay(dayStart - (29 - index) * 86400000);
+    const entry = ledger.days?.[date];
+    const tokens = Number(entry?.tokens) || 0;
+    const requests = Number(entry?.requests) || 0;
+    const breakdown = { ...entry?.providers };
+    const missingUsage = !!(entry?.missingUsage || entry?.missingCustomUsage);
+    let unassignedTokens = tokens;
+    let unassignedRequests = requests;
+    for (const value of Object.values(breakdown)) {
+      unassignedTokens -= value.tokens;
+      unassignedRequests -= value.requests;
+    }
+    if (unassignedRequests > 0 || unassignedTokens > 0) {
+      const unknown = breakdown.unknown;
+      breakdown.unknown = {
+        tokens: (unknown?.tokens || 0) + Math.max(0, unassignedTokens),
+        requests: (unknown?.requests || 0) + Math.max(0, unassignedRequests),
+        missingUsage: !!(unknown?.missingUsage || (entry?.providers ? entry.legacyMissingUsage : missingUsage)),
+      };
+    }
+    for (const id of Object.keys(breakdown)) {
+      if (providers.has(id)) continue;
+      const name = id === "deepseek" ? "DeepSeek" :
+        id === "unknown" ? "未标记供应商" :
+        id === "custom" ? "自定义供应商" : id.slice("custom:".length);
+      providers.set(id, { id, name, since: date });
+    }
+    return { date, tokens, requests, missingUsage, recorded: date >= ledger.analytics.since, providers: breakdown };
+  });
+  return { daily: days, providers: [...providers.values()] };
+}
 const empty = () => ({
   tokens: 0,
   input: 0,
@@ -209,17 +269,8 @@ export function usageStatistics(directory, config = {}, at = Date.now()) {
     };
   return {
     today: beijingDay(at),
-    daily: Array.from({ length: 30 }, (_, index) => {
-      const date = beijingDay(dayStart - (29 - index) * 86400000),
-        entry = ledger.days?.[date];
-      return {
-        date,
-        tokens: Number(entry?.tokens) || 0,
-        requests: Number(entry?.requests) || 0,
-        missingUsage: !!(entry?.missingUsage || entry?.missingCustomUsage),
-        recorded: date >= a.since,
-      };
-    }),
+    ...dailyUsage(ledger, dayStart),
+    expenses: expenseRanges(ledger, beijingDay(at), dayStart),
     total: a.total,
     ...periods,
     since: a.since,

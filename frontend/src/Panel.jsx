@@ -122,6 +122,7 @@ const overviewHeadlines = [
 function Overview() {
   const [s, , err] = useData("/api/status", 10000);
   const [liveSleep,setLiveSleep]=useState(null);
+  const [expenseRange, setExpenseRange] = useState("today");
   const sleeping=liveSleep??s?.sleep?.mode==='sleep';
   const napping = sleeping && s?.sleep?.reason === 'nap';
   const [headline] = useState(
@@ -130,6 +131,7 @@ function Overview() {
   );
   if (err) return <ErrorBox>{err}</ErrorBox>;
   if (!s) return <Empty>正在读取她的生活…</Empty>;
+  const expense = s.usage?.expenses?.[expenseRange];
   const napMinutes = napping ? Math.max(0, Math.ceil((s.sleep.napUntil - Date.now()) / 60000)) : 0;
   const energyStatus = napping ? `小睡 · 约 ${napMinutes} 分钟后醒` :
     sleeping ? "睡觉" : liveSleep !== null || s.sleep?.mode === "awake" ? "清醒" : "未同步";
@@ -163,7 +165,7 @@ function Overview() {
           {s.daily && (
             <Card
               title="今日模型用量"
-              subtitle="按本实例接口返回usage统计；费用为人民币估算，单次请求可能超过剩余额度。"
+              subtitle="请求次数与 Tokens 按今日统计，费用按所选范围估算。"
             >
               <div className="usage-today-stats">
                 <div>
@@ -177,15 +179,30 @@ function Overview() {
                     <small>次</small>
                   </strong>
                 </div>
-                <div>
-                  <span>费用估算</span>
+                <div className="usage-expense">
+                  <label className="daily-range">
+                    <span>费用估算</span>
+                    <select aria-label="费用估算时间范围" value={expenseRange}
+                      onChange={(event) => setExpenseRange(event.target.value)}>
+                      <option value="today">今天</option>
+                      <option value="threeDays">最近 3 天</option>
+                      <option value="sevenDays">最近 7 天</option>
+                      <option value="month">最近 30 天</option>
+                      <option value="all">全部</option>
+                    </select>
+                  </label>
                   <strong>
-                    {Number.isFinite(s.daily.estimatedCny)
-                      ? "¥ " + s.daily.estimatedCny.toFixed(6)
+                    {Number.isFinite(expense?.cny)
+                      ? "¥ " + expense.cny.toFixed(6)
                       : "暂无估算"}
                   </strong>
                 </div>
               </div>
+              <small className="muted usage-expense-note">
+                {expenseRange === "all" ? "全部为已保留的估算记录。" :
+                  expenseRange !== "today" && expense?.from ? expense.from + " 起。" : ""}
+                {"仅统计有可用单价和用量的请求。"}
+              </small>
               <p className="muted usage-today-date">{s.daily.day} · 北京时间</p>
               {s.daily.paused && (
                 <ErrorBox>

@@ -2411,6 +2411,15 @@ button,
   font-size: 12px;
   margin: 0;
 }
+.daily-usage-toolbar {
+  flex-wrap: wrap;
+}
+.daily-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  min-width: 0;
+}
 .daily-range {
   display: flex;
   align-items: center;
@@ -2421,6 +2430,10 @@ button,
 .daily-range select {
   width: auto;
   min-width: 104px;
+}
+.daily-filters select {
+  max-width: min(180px, 65vw);
+  text-overflow: ellipsis;
 }
 .daily-usage-summary {
   margin: 24px 0 8px;
@@ -2668,6 +2681,17 @@ button,
   font-size: 12px;
   font-weight: 400;
   color: var(--muted);
+}
+.usage-today-stats .usage-expense,
+.usage-expense .daily-range {
+  flex-wrap: wrap;
+}
+.usage-expense .daily-range select {
+  min-width: 0;
+}
+.usage-expense-note {
+  display: block;
+  margin-top: 8px;
 }
 .usage-today-date {
   font-size: 12px;
