@@ -1,5 +1,6 @@
 import EmailSettings from "./EmailSettings.jsx";
 import PasswordChange from "./PasswordChange.jsx";
+import MediaModelSettings from "./MediaModelSettings.jsx";
 import React, { useState, useEffect, useCallback } from "react";
 import {
   Fish,
@@ -145,12 +146,15 @@ function Account({ me, tab, notify }) {
           </Card>
         </div>
       ) : tab === "security" ? (
-        <div className="two-col">
-          <ModelCredentials bot={b} notify={notify} reload={load} />
-          <Card title="登录密码">
-            <PasswordChange notify={notify} />
-          </Card>
-        </div>
+        <>
+          <div className="two-col">
+            <ModelCredentials bot={b} notify={notify} reload={load} />
+            <Card title="登录密码">
+              <PasswordChange notify={notify} />
+            </Card>
+          </div>
+          <MediaModelSettings models={b.mediaModels} notify={notify} reload={load} />
+        </>
       ) : (
         <>
           <div className="metric-grid">

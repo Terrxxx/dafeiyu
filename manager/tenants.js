@@ -9,6 +9,7 @@ import { atomicWriteFile } from '../src/atomic-file.js';
 import { token } from './accounts.js';
 import { helper, checkBalance } from './runtime-client.js';
 import { modelSettings, normalizeCustomUrl } from '../src/model-provider.js';
+import { normalizeMediaModel, publicMediaModels, runtimeMediaModels } from '../src/media-model-settings.js';
 
 const customCredits = billing => ({
   available: billing === 'insufficient_balance' ? false : null, supported: false, balances: [], checkedAt: Date.now(),
@@ -116,9 +117,32 @@ export class Tenants {
   const latest=this.accounts.bot(name),secrets=latest.secrets;
   const model = modelSettings(secrets);
   const env={DEEPSEEK_API_KEY:secrets.apiKey,DEEPSEEK_BASE_URL:model.baseUrl,DEEPSEEK_MODEL:model.model,DAFEIYU_MODEL_PROVIDER:model.provider,NAPCAT_TOKEN:secrets.napcatToken,BILIBILI_COOKIE:secrets.biliCookie||''};
+  const mediaModels = runtimeMediaModels(secrets);
+  if (Object.keys(mediaModels).length) env.DAFEIYU_MEDIA_MODELS = JSON.stringify(mediaModels);
   const result=await this.runtime('start',name,{env});this.accounts.db.prepare('UPDATE bots SET desired=1 WHERE username=?').run(name);this.accounts.audit(name,`bot-${action}`);return result;
  });}
- async logs(name){const {text}=await this.runtime('logs',name);let safe=text;for(const secret of Object.values(this.accounts.bot(name)?.secrets||{}))if(typeof secret==='string'&&secret.length>8)safe=safe.split(secret).join('[已隐藏]');return safe.split('\n').filter(Boolean).slice(-200).map((line,id)=>{const match=line.match(/^(\d{4}-\d{2}-\d{2}T\S+) (.*)$/);return {id,time:match?match[1]:new Date().toISOString(),level:'info',text:(match?match[2]:line).slice(0,4000)};});}
+ async saveMediaModel(name, { kind, ...configuration }) {
+  return this.exclusive(name, async () => {
+   const bot = this.accounts.bot(name);
+   if (!bot) throw Object.assign(Error('请先创建大肥鱼'), { status: 400 });
+   const previous = bot.secrets.mediaModels || {};
+   const saved = normalizeMediaModel(kind, configuration, previous[kind]);
+   const secrets = { ...bot.secrets, mediaModels: { ...previous, [kind]: saved } };
+   this.accounts.transaction(() => {
+    this.accounts.saveSecrets(name, secrets);
+    this.accounts.audit(name, 'media-model-update');
+   });
+   return { mediaModels: publicMediaModels(secrets) };
+  });
+ }
+ async logs(name){
+  const {text}=await this.runtime('logs',name);
+  const secrets=this.accounts.bot(name)?.secrets||{};
+  const keys=Object.values(secrets.mediaModels||{}).map(profile=>profile.apiKey);
+  let safe=text;
+  for(const secret of [...Object.values(secrets), ...keys])if(typeof secret==='string'&&secret.length>=8)safe=safe.split(secret).join('[已隐藏]');
+  return safe.split('\n').filter(Boolean).slice(-200).map((line,id)=>{const match=line.match(/^(\d{4}-\d{2}-\d{2}T\S+) (.*)$/);return {id,time:match?match[1]:new Date().toISOString(),level:'info',text:(match?match[2]:line).slice(0,4000)};});
+ }
  async updateBili(name,cookie){return this.exclusive(name,async()=>{
   await this.runtime('stop',name);const bot=this.accounts.bot(name);if(!bot)throw new Error('请先创建大肥鱼');
   const secrets={...bot.secrets};if(cookie)secrets.biliCookie=cookie;else delete secrets.biliCookie;

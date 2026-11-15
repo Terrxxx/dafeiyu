@@ -67,6 +67,7 @@ export function normalizeConfig(config) {
   config.provider = process.env.DAFEIYU_MODEL_PROVIDER === 'custom' ? 'custom' : 'deepseek';
   config.baseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
   config.model = process.env.DEEPSEEK_MODEL || 'deepseek-flash';
+  config.mediaModels = JSON.parse(process.env.DAFEIYU_MEDIA_MODELS || '{}');
   config.wsUrl = process.env.NAPCAT_WS_URL || 'ws://127.0.0.1:3001';
   config.wsToken = process.env.NAPCAT_TOKEN || '';
   config.persona = fs.readFileSync(PERSONA_FILE, 'utf8');

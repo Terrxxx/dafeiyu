@@ -63,6 +63,22 @@ export async function handlePlannedQQ(msg,key,{agent,store,tools,qq,throttle,log
   try { agent.feelings.applyChat(msg,{users:Array.isArray(result.users)?result.users:[]},'chat:'+key); }
   catch(error){store.audit('chat-analysis-rejected',{reason:error.message});}
   if(Array.isArray(result.style)&&result.style.length){agent.personality.applyReflection(msg.session,result.style,(msg.sources||[msg]).map(s=>({role:'user',content:s.text||''})));}
+  if (admin && energyMode !== 'fog' && result.generate) {
+    const { kind, prompt } = result.generate;
+    if (!tools.generationKinds().includes(kind)) {
+      await send('这项媒体生成没开启。可以在「密钥与安全」里配置。');
+      return;
+    }
+    await throttle.wait(msg.session);
+    validate();
+    try {
+      await tools.call('qq_generate_media', { mediaKind: kind, prompt, quote: result.quote === true });
+    } catch (error) {
+      log('QQ 媒体生成或发送未完成：' + error.message);
+      if (!tools.currentAttempted) await send('这次没生成成功。' + error.message);
+    }
+    return;
+  }
   const families=Array.isArray(result.capabilities)?[...new Set(result.capabilities)].filter(x=>[...chatFamilies,'qq'].includes(x)):[];
   if(spaceIntent?.operations&&qzoneRead?.state==='read'&&qzoneRead.count>0&&!families.includes('qzone'))families.push('qzone');
   if(admin&&families.length&&energyMode!=='fog'){

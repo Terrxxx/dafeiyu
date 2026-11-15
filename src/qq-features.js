@@ -5,10 +5,12 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { synthesizeSpeech } from './media.js';
 import { recordQzoneAction } from './qq-journal.js';
-import { userBlocked } from './user-controls.js';
+import { acceptedSource, assertMemoryEpoch, userBlocked } from './user-controls.js';
 import { searchUserMemory } from './user-memory.js';
 import { checklistMarkdown } from './checklist-markdown.js';
 import { imageSendResult } from './image-description.js';
+import { generateMedia } from './media-generation.js';
+import { canOperateQQ, incomingAllowed } from './qq-policy.js';
 
 const str = description => ({ type: 'string', description });
 const target = { kind: { type: 'string', enum: ['private', 'group'] }, target: str('当前会话或已核实的目标ID') };
@@ -28,12 +30,77 @@ export const qqFeatureSchemas = [
   schema('qq_read_image', '按6位图片ID读取缓存描述，最多100字符，不重新识图', { imageId: str('当前会话可用的图片ID') }, ['imageId']),
   schema('qq_save_sticker', '自主把已看懂且适合复用的表情图存入QQ收藏；不要把私人照片或聊天截图作为通用表情', { imageId: str('可用图片ID') }, ['imageId']),
   schema('qq_send_image', '发送已识别的可用图片，仅返回图片ID；需要文字回应时仍可追加文字', { ...target, imageId: str('可用图片ID'), quote: { type: 'boolean' } }, ['kind', 'target', 'imageId']),
-  schema('qq_send_voice', '使用本机中文音色把短句合成为语音并发送，当前会话发后不再追加文字', { ...target, text: str('1至200字'), quote: { type: 'boolean' }, expectReply: { type: 'boolean', description: '主动向好友提问希望回应时为true' } }, ['kind', 'target', 'text']),
+  schema('qq_send_voice', '把短句合成为 QQ 原生语音并发送，当前会话发后不再追加文字', { ...target, text: str('1至200字'), quote: { type: 'boolean' }, expectReply: { type: 'boolean', description: '主动向好友提问希望回应时为true' } }, ['kind', 'target', 'text']),
+  schema('qq_generate_media', '用已配置的模型生成图片、短音乐或音效并发到当前管理员私聊。音频以 QQ 语音送达，发送以回执为准', {
+    mediaKind: { type: 'string', enum: ['image', 'music', 'effect'] },
+    prompt: str('生成描述，1至1000字'), quote: { type: 'boolean' },
+  }, ['mediaKind', 'prompt']),
   schema('qq_set_avatar', '后台自主或经核实管理员私聊更换大肥鱼本人的单人静态头像，必须通过固定当前QQ头像的双图身份核验；其他人物/物品/不确定一律拒绝，24小时最多一次', { imageId: str('已收藏的本人图片ID') }, ['imageId']),
   schema('web_search', '使用独立浏览器搜索公开互联网，返回标题、摘要和来源链接；不搜索私聊敏感内容', { query: str('公开搜索词，最多120字') }, ['query']),
   schema('web_read', '只读本轮搜索结果的公开网页文字，无用户登录态', { url: str('本轮搜索返回的网址') }, ['url']),
 ];
 const digest = value => createHash('sha256').update(value).digest('hex').slice(0, 24);
+
+async function sendQQMedia(tools, args, data, isCurrent) {
+  const group = args.kind === 'group';
+  const message = [...(isCurrent && args.quote ? [{ type: 'reply', data: { id: tools.current.id } }] : []), data];
+  const receipt = await tools.qq.call(group ? 'send_group_msg' : 'send_private_msg', {
+    [group ? 'group_id' : 'user_id']: Number(args.target), message,
+  });
+  if (receipt?.message_id === undefined) throw Error('媒体发送未收到消息ID，状态不明');
+  return receipt;
+}
+
+function assertGeneratedSend(tools, kind, args) {
+  tools.sleep?.assertAwake();
+  if (tools.operationEpoch != null) assertMemoryEpoch(tools.store, tools.operationEpoch);
+  const policy = tools.qq.policy?.() || tools.config.qq;
+  if (kind !== 'speech' && (!canOperateQQ(tools.current, policy) || !tools.generationKinds().includes(kind))) {
+    throw Error('当前管理员私聊未开启这项媒体生成能力');
+  }
+  if (!incomingAllowed(policy, args.kind, args.target, args.target)) throw Error('该 QQ 会话已关闭');
+  if (kind !== 'image' && (policy.voiceEnabled === false || !tools.components.allowed('qq_send_voice'))) {
+    throw Error('QQ 语音已关闭');
+  }
+  if (args.kind === 'private' && userBlocked(tools.store, args.target)) throw Error('该用户已屏蔽');
+  const current = tools.current;
+  if (current && (current.sources || [current]).some(source =>
+    !acceptedSource(tools.store, source, current.receivedAt) ||
+    !incomingAllowed(policy, current.kind, current.target, source.sender))) throw Error('当前用户已屏蔽或旧消息已失效');
+}
+
+async function requestGeneratedMedia(tools, kind, text, args) {
+  assertGeneratedSend(tools, kind, args);
+  tools.store.reserve('model', tools.config.agent.maxModelCallsPerHour);
+  const media = await generateMedia(kind, tools.config.mediaModels[kind], text, tools.mediaRequest);
+  assertGeneratedSend(tools, kind, args);
+  return media;
+}
+
+async function generateForCurrent(tools, args) {
+  const current = tools.current;
+  const kind = args.mediaKind;
+  assertGeneratedSend(tools, kind, args);
+  const image = kind === 'image';
+  if (image ? tools.currentImageAttempted : tools.currentAttempted) return { skipped: true, reason: '本轮已经回复' };
+  if (image) tools.media.assertReadable();
+  return tools.store.once(`${current.key}:generate-media`, async () => {
+    tools.outgoing();
+    const { bytes, mime } = await requestGeneratedMedia(tools, kind, args.prompt, args);
+    const fileData = bytes.toString('base64');
+    const asset = image ? tools.media.ingest(`data:${mime};base64,${fileData}`, '生成画面：' + args.prompt, tools.scope) : null;
+    tools.currentAttempted = true;
+    if (image) tools.currentImageAttempted = true;
+    const receipt = await sendQQMedia(tools, args, {
+      type: image ? 'image' : 'record', data: { file: 'base64://' + fileData },
+    }, true);
+    if (asset) tools.media.markSent(asset.id);
+    const summary = asset ? `[图片 ${asset.id}]` : kind === 'music' ? '[音乐语音]' : '[音效语音]';
+    tools.store.appendHistory(current.session, 'assistant', summary, tools.config.agent.historyMessages);
+    return asset ? imageSendResult(asset.id, receipt) : receipt;
+  });
+}
+
 function knownUser(tools, id) {
   if (userBlocked(tools.store, id)) throw new Error('该用户已屏蔽');
   if (!/^[1-9]\d*$/.test(String(id)) || !tools.knownUsers.has(String(id))) throw new Error('请先核实用户：当前发送者、目标列表或群成员列表');
@@ -51,6 +118,7 @@ export function rememberPosts(tools, result) {
   }) };
 }
 export async function executeQQFeature(tools, name, args) {
+  if (name === 'qq_generate_media') return generateForCurrent(tools, args);
   if (name === 'qq_search_user_memory') {
     if (userBlocked(tools.store, args.userId)) throw new Error('该用户已屏蔽');
     const scope = tools.current?.session || (tools.proactiveTarget ? `qq:user:${tools.proactiveTarget}` : tools.scope);
@@ -192,17 +260,19 @@ export async function executeQQFeature(tools, name, args) {
       data = { type: 'image', data: { file: 'base64://' + tools.media.bytes(item).toString('base64') } };
       sentImageId=item.id;summary = `[图片 ${item.id}]`;
     } else {
-      const audio = await (tools.synthesizeSpeech || synthesizeSpeech)(args.text, tools.media.directory, tools.config.social?.voiceName);
-      data = { type: 'record', data: { file: 'base64://' + audio.toString('base64') } };
       summary = `[语音] ${args.text}`;
     }
     if (isCurrent) { tools.currentAttempted = true; if (name === 'qq_send_image') tools.currentImageAttempted = true; }
     const key = isCurrent ? (name === 'qq_send_image' ? `${tools.current.key}:image:${args.imageId}` : tools.current.key) : `qq-media:${args.kind}:${args.target}:${digest(summary)}:${Math.floor(Date.now() / 3600000)}`;
     return tools.store.once(key, async () => {
       tools.outgoing();
-      const message = [...(isCurrent && args.quote ? [{ type: 'reply', data: { id: tools.current.id } }] : []), data];
-      const receipt = await tools.qq.call(args.kind === 'group' ? 'send_group_msg' : 'send_private_msg', { [`${args.kind === 'group' ? 'group' : 'user'}_id`]: Number(args.target), message });
-      if (receipt?.message_id === undefined) throw new Error('媒体发送未收到消息ID，状态不明');
+      if (name === 'qq_send_voice') {
+        const audio = tools.config.mediaModels?.speech
+          ? (await requestGeneratedMedia(tools, 'speech', args.text, args)).bytes
+          : await (tools.synthesizeSpeech || synthesizeSpeech)(args.text, tools.media.directory, tools.config.social?.voiceName);
+        data = { type: 'record', data: { file: 'base64://' + audio.toString('base64') } };
+      }
+      const receipt = await sendQQMedia(tools, args, data, isCurrent);
       if (name === 'qq_send_image') tools.media.markSent(args.imageId);
       tools.store.appendHistory(`qq:${args.kind === 'group' ? 'group' : 'user'}:${args.target}`, 'assistant', summary, tools.config.agent.historyMessages);
       return name === 'qq_send_image' ? imageSendResult(sentImageId,receipt) : receipt;

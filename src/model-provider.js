@@ -23,8 +23,9 @@ function publicAddress(address, family = isIP(address)) {
   return family === 6 && globalV6.check(address, 'ipv6') && !blocked.check(address, 'ipv6');
 }
 
-export function normalizeCustomUrl(value) {
-  if (typeof value !== 'string' || value.length > 1024 || !/^https:\/\/[^/]/i.test(value) || /[?#\\\u0000-\u0020\u007f]/.test(value)) {
+export function publicHttpsUrl(value, { allowQuery = false } = {}) {
+  if (typeof value !== 'string' || value.length > (allowQuery ? 4096 : 1024) ||
+      !/^https:\/\/[^/]/i.test(value) || /[#\\\u0000-\u0020\u007f]/.test(value) || (!allowQuery && value.includes('?'))) {
     throw Object.assign(Error('请输入公开的 HTTPS API URL，不含查询参数'), { status: 400 });
   }
   let url;
@@ -37,6 +38,11 @@ export function normalizeCustomUrl(value) {
     !host.includes('.') || /(?:^|\.)(?:localhost|local|internal|localdomain|lan|home|test|invalid|onion|arpa)$/.test(host)) {
     throw Object.assign(Error('API URL 必须指向公网地址'), { status: 400 });
   }
+  return url;
+}
+
+export function normalizeCustomUrl(value) {
+  const url = publicHttpsUrl(value);
   const pathname = url.pathname.replace(/\/+$/, '');
   // Bare domains use the OpenAI-compatible default. An explicit root
   // /chat/completions route remains valid for gateways that use that layout.
@@ -71,12 +77,16 @@ export function publicLookup(hostname, options, callback, resolve = lookup) {
 }
 
 let dispatcher;
+export function publicModelFetch(request, url, options) {
+  dispatcher ||= new Agent({ connect: { lookup: publicLookup } });
+  return request(url, { ...options, redirect: 'error', dispatcher });
+}
+
 export function modelRequest(request, config, url, options) {
   if (config?.provider !== 'custom') return request(url, options);
   const safeUrl = modelCompletionUrl(config);
   if (String(url) !== safeUrl) throw Error('自定义模型请求地址与配置不符');
-  dispatcher ||= new Agent({ connect: { lookup: publicLookup } });
   const body = JSON.parse(options.body);
   delete body.thinking;
-  return request(safeUrl, { ...options, body: JSON.stringify(body), redirect: 'error', dispatcher });
+  return publicModelFetch(request, safeUrl, { ...options, body: JSON.stringify(body) });
 }

@@ -332,6 +332,11 @@ strong {
 .sidebar-repository svg:last-child {
   margin-left: auto;
 }
+@media (max-width: 600px) {
+  .form-grid.media-model-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .theme {
   display: flex;
   align-items: center;

@@ -8,6 +8,7 @@ import{atomicWriteFile}from'../src/atomic-file.js';
 import{publishComponentPolicy}from'../src/component-policy.js';
 import{dailyStatus}from'../src/daily-budget.js';
 import { modelSettings } from '../src/model-provider.js';
+import { publicMediaModels } from '../src/media-model-settings.js';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -114,10 +115,11 @@ export async function startManager({dataRoot=process.env.DAFEIYU_DATA_ROOT||path
    if(pathname==='/account/status'&&req.method==='GET'){
     const bot=accounts.bot(user.username);const status=bot?await refresh(user.username):null;
     const model=bot?modelSettings(bot.secrets):null;
-    return json(res,200,{daily:bot?dailyStatus(tenants.directory(user.username),model):null,username:user.username,role:user.role,bot:bot?{qq:bot.qq,created:bot.created,billing:bot.billing,keySet:!!bot.secrets.apiKey,biliConfigured:!!bot.secrets.biliCookie,desired:!!bot.desired,...status,provider:model.provider,...(model.provider==='custom'?{baseUrl:model.baseUrl,customModel:bot.secrets.customModel||''}:{})}:null,balance:tenants.balances.get(user.username)||null});
+    return json(res,200,{daily:bot?dailyStatus(tenants.directory(user.username),model):null,username:user.username,role:user.role,bot:bot?{qq:bot.qq,created:bot.created,billing:bot.billing,keySet:!!bot.secrets.apiKey,biliConfigured:!!bot.secrets.biliCookie,desired:!!bot.desired,...status,provider:model.provider,mediaModels:publicMediaModels(bot.secrets),...(model.provider==='custom'?{baseUrl:model.baseUrl,customModel:bot.secrets.customModel||''}:{})}:null,balance:tenants.balances.get(user.username)||null});
    }
    if(pathname==='/account/create'&&req.method==='POST'){const created=await tenants.create(user.username,await bodyOf(req));syncPolicy();return json(res,201,created);}
    if(pathname==='/account/key'&&req.method==='POST')return json(res,200,await tenants.saveKey(user.username,await bodyOf(req)));
+   if(pathname==='/account/media-model'&&req.method==='POST')return json(res,200,await tenants.saveMediaModel(user.username,await bodyOf(req)));
    if(pathname==='/account/credits'&&req.method==='GET'){
     const cached=tenants.balances.get(user.username);if(cached&&Date.now()-cached.checkedAt<60000)return json(res,200,cached);
     if(!balancePending.has(user.username)){const job=tenants.exclusive(user.username,()=>tenants.balance(user.username)).finally(()=>balancePending.delete(user.username));balancePending.set(user.username,job);}

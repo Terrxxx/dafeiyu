@@ -113,8 +113,23 @@ test('manager keeps DeepSeek as default, saves custom settings and never checks 
   assert.deepEqual(settings.value.config.limits, config.limits);
   assert.equal((await call('/api/status', undefined, panelHeaders)).value.daily.paused, false);
   assert.equal((await call('/account/credits')).value.supported, false);
+  const image = { kind: 'image', enabled: true, source: 'chat', protocol: 'openai', model: 'image-model' };
+  const effect = { kind: 'effect', enabled: true, source: 'custom', protocol: 'elevenlabs',
+    model: 'sound-model', baseUrl: 'https://audio.example.com', apiKey: 'media-key-test' };
+  assert.equal((await call('/account/media-model', image)).status, 200);
+  assert.equal((await call('/account/media-model', { ...effect, baseUrl: 'https://127.0.0.1' })).status, 400);
+  assert.equal((await call('/account/media-model', effect)).status, 200);
+  assert.equal((await call('/account/media-model', { ...effect, baseUrl: 'https://other.example.com', apiKey: '' })).status, 400);
+  const withMedia = (await status()).value.bot.mediaModels;
+  assert.equal(withMedia.effect.keySet, true);
+  assert.doesNotMatch(JSON.stringify(withMedia), /media-key-test|custom-key-test/);
   assert.equal((await call('/account/control', { action: 'start' })).status, 200);
   const env = runtimeCalls.findLast(row => row.operation === 'start').options.env;
+  const configured = JSON.parse(env.DAFEIYU_MEDIA_MODELS);
+  assert.equal(configured.image.endpoint, 'https://api.example.com/v1/images/generations');
+  assert.equal(configured.image.apiKey, 'custom-key-test');
+  assert.equal(configured.effect.endpoint, 'https://audio.example.com/v1/sound-generation');
+  assert.equal(configured.effect.apiKey, 'media-key-test');
   assert.equal(env.DAFEIYU_MODEL_PROVIDER, 'custom');
   assert.equal(env.DEEPSEEK_MODEL, 'provider/model');
   assert.equal(env.DEEPSEEK_BASE_URL, custom.bot.baseUrl);
@@ -126,8 +141,11 @@ test('manager keeps DeepSeek as default, saves custom settings and never checks 
   assert.equal(restored.bot.baseUrl, undefined);
   assert.equal(restored.daily.limitsSuspended, false);
   assert.deepEqual(restored.daily.limits, config.limits);
+  assert.equal((await call('/account/media-model', { kind: 'effect', enabled: false })).status, 200);
+  assert.equal((await status()).value.bot.mediaModels.effect.enabled, false);
   assert.equal((await call('/account/control', { action: 'start' })).status, 200);
   const deepseek = runtimeCalls.findLast(row => row.operation === 'start').options.env;
+  assert.equal(JSON.parse(deepseek.DAFEIYU_MEDIA_MODELS).effect, undefined);
   assert.equal(deepseek.DEEPSEEK_BASE_URL, 'https://api.deepseek.com');
   assert.equal(deepseek.DEEPSEEK_MODEL, 'deepseek-flash');
   assert.ok(checkedKeys.every(key => !key.includes('custom-key-test')));

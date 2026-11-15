@@ -4,7 +4,7 @@ import { withoutRepeatedQuestions, recordQuestion } from './proactive-dialogue.j
 import{biliFlags,toolContextAllowed}from'./tool-availability.js';
 import{chatToolAllowed}from'./tool-routing.js';
 import {checkBalance} from './api-balance.js';
-import { assertQQTool, isQQAdmin, isPrivateSender } from './qq-policy.js';
+import { assertQQTool, canOperateQQ, isQQAdmin, isPrivateSender } from './qq-policy.js';
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { messageParts } from './message-parts.js';
@@ -91,11 +91,22 @@ export class SocialTools {
     return { id, restricted: !admin, live };
   }
   privateToolAllowed(name, args = null) {
+    if (name === 'qq_generate_media') {
+      return canOperateQQ(this.current, this.qq.policy?.() || this.config.qq) &&
+        this.generationKinds().some(kind => !args || kind === args.mediaKind);
+    }
     if (this.current && ['qzone_publish', 'bili_publish_dynamic'].includes(name) && this.current.kind !== 'private') return false;
     const authority = this.privateAuthority(); if (!authority?.restricted) return true;
     if (['qq_list_images', 'qq_read_image', 'qq_list_stickers', 'qq_inspect_sticker', 'qq_search_user_memory'].includes(name)) return true;
     if (!authority.live || !['qq_reply_current', 'qq_send_message', 'qq_send_image', 'qq_send_sticker', 'qq_send_voice'].includes(name)) return false;
     return !args || name === 'qq_reply_current' || args.kind === 'private' && String(args.target) === authority.id;
+  }
+  generationKinds() {
+    if (!this.config.qq?.enabled) return [];
+    const models = this.config.mediaModels || {};
+    const policy = this.qq.policy?.() || this.config.qq;
+    const audioAllowed = policy.voiceEnabled !== false && this.components.allowed('qq_send_voice');
+    return ['image', 'music', 'effect'].filter(kind => models[kind] && (kind === 'image' || audioAllowed));
   }
   get schemas() {return this.fullSchemas().filter(schema=>{const name=schema.function.name;if(this.chatToolNames&&!this.chatToolNames.has(name))return false;if(this.inboxPeer&&!['bili_read_messages','bili_reply_message'].includes(name))return false;if(this.inboxNotice&&name!=='bili_reply_notice')return false;try{assertQQTool(this.config.qq,name);}catch{return false;}return toolContextAllowed(this,name)&&chatToolAllowed(name,this.chatFamilies)&&this.components.allowed(name)&&this.privateToolAllowed(name);});}
   begin(scope, current = null) {
@@ -124,8 +135,10 @@ export class SocialTools {
     this.store.reserve('outgoing', this.config.agent.maxOutgoingPerHour, text === null ? 1 : messageParts(text).length);
   }
   async call(name, args) {
+    if (name === 'qq_generate_media' && this.current) args = { ...args, kind: this.current.kind, target: this.current.target };
     const reply=this.current&&(name==='qq_reply_current'||args?.kind===this.current.kind&&String(args?.target)===String(this.current.target))&&['qq_reply_current','qq_send_message','qq_send_voice','qq_send_image','qq_send_sticker'].includes(name);
-    if(reply)messageStage(this.store,this.current,'sending');
+    const currentGeneration = name === 'qq_generate_media' && this.current;
+    if(reply || currentGeneration)messageStage(this.store,this.current,'sending');
     else if(this.current)messageStage(this.store,this.current,'tools');
     if (this.current && (name === 'qq_reply_current' || args?.kind === this.current.kind && String(args?.target) === String(this.current.target))) {
       if (['qq_send_message', 'qq_reply_current', 'qq_send_voice'].includes(name)) this.currentTextAttempted = true;
@@ -135,7 +148,8 @@ export class SocialTools {
     try {
       const result = await this.callChecked(name, args);
       const confirmed = confirmedMessage(result?.[mediaReceipt] || result);
-      if (reply && confirmed) messageStage(this.store, this.current, 'replied');
+      if (currentGeneration && confirmed && args.mediaKind !== 'image') this.currentTextAttempted = true;
+      if ((reply || currentGeneration) && confirmed) messageStage(this.store, this.current, 'replied');
       else if (reply && result?.repeatedQuestion && !this.store.qqProcessing?.get(this.current)?.confirmed) {
         messageStage(this.store, this.current, 'silent');
       }
@@ -144,7 +158,7 @@ export class SocialTools {
       }
       return result;
     }
-    catch(error){if(reply)this.store.qqProcessing?.fail(this.current,error);throw error;}
+    catch(error){if(reply || currentGeneration)this.store.qqProcessing?.fail(this.current,error);throw error;}
     finally { this.operationEpoch = null; }
   }
   async callChecked(name, args) {
@@ -225,7 +239,7 @@ export class SocialTools {
       if (result?.skipped || result?.alreadyLiked) return result;
       const receipt=result?.[mediaReceipt]||result;
       if (questionScope && confirmedMessage(receipt)) recordQuestion(this.store, questionScope, args.text);
-      if (['qq_send_message', 'qq_send_image', 'qq_send_voice', 'qq_send_sticker', 'qq_reply_current'].includes(name)) {
+      if (['qq_send_message', 'qq_send_image', 'qq_send_voice', 'qq_send_sticker', 'qq_reply_current', 'qq_generate_media'].includes(name)) {
         const recipient = name === 'qq_reply_current' ? this.current : args;
         this.store.recordSent(recipient.kind, recipient.target, receipt, args.text || `[${name}]`);
         this.sleep?.recordOutgoing?.(recipient.kind, recipient.target, receipt);
