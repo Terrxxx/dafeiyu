@@ -10,6 +10,7 @@ import { qqIdentityReply, qqSenderRoles } from './person-identity.js';
 import { withoutRepeatedQuestions, recordQuestion } from './proactive-dialogue.js';
 import { mergeMessages } from './message-buffer.js';
 import { handlePlannedQQ } from './qq-turn.js';
+import { groupReplyTargets } from './qq-group-replies.js';
 import { measureModelTurn } from './turn-meter.js';
 import {messageStage,confirmedMessage} from './qq-processing.js';
 import { handleAdminRest } from './qq-rest-command.js';
@@ -50,7 +51,7 @@ async function handleQQMessageImpl(msg, key, { agent, store, tools, qq, throttle
     delete store.data.publicationDrafts[msg.session];
     store.save();
   }
-  const identityReply = qqIdentityReply(msg, policy);
+  const identityReply = agent.planQQTurn && groupReplyTargets(msg).length ? '' : qqIdentityReply(msg, policy);
   const direct = identityReply || ['publish', 'status', 'choose-platform'].includes(publication?.mode);
   const energyMode = direct ? 'normal' : tools.sleep?.responseMode() || 'normal';
   if (energyMode === 'sleep') {

@@ -9,6 +9,8 @@ import { qzoneReadIntent, readRequestedSpace, qzoneReadMaterial } from './qzone-
 import {messageStage} from './qq-processing.js';
 import {sourceAddress} from './group-addressing.js';
 import {crossSendIntent,handleCrossSend,crossSendPromise} from './qq-cross-send.js';
+import { groupReplyTargets, replyToGroupBatch } from './qq-group-replies.js';
+import { tryQQIllustration } from './qq-features.js';
 
 function explicitImagePrompt(text) {
   const prompt = String(text || '').trim();
@@ -26,7 +28,8 @@ export async function handlePlannedQQ(msg,key,{agent,store,tools,qq,throttle,log
   tools.begin(msg.session,{...msg,key,memoryEpoch:epoch});
   for(const source of msg.sources||[msg])tools.sleep?.noteChat?.(`qq-incoming:${msg.session}:${source.id}`,{kind:msg.kind,target:msg.target,direction:'incoming'});
   const validate=()=>{assertMemoryEpoch(store,epoch);tools.sleep?.assertAwake();if((msg.sources||[msg]).some(s=>!incomingAllowed(qq.policy?.()||agent.config.qq||{},msg.kind,msg.target,s.sender)||!acceptedSource(store,s,msg.receivedAt)))throw Error('会话权限已变化，本轮回复已取消');};
-  const admin=canOperateQQ(msg,qq.policy?.()||agent.config.qq);
+  const policy = qq.policy?.() || agent.config.qq;
+  const admin = canOperateQQ(msg, policy);
   if (!admin) publication = null;
   const send = async text => {
     await throttle.wait(msg.session);
@@ -73,7 +76,14 @@ export async function handlePlannedQQ(msg,key,{agent,store,tools,qq,throttle,log
   try { agent.feelings.applyChat(msg,{users:Array.isArray(result.users)?result.users:[]},'chat:'+key); }
   catch(error){store.audit('chat-analysis-rejected',{reason:error.message});}
   if(Array.isArray(result.style)&&result.style.length){agent.personality.applyReflection(msg.session,result.style,(msg.sources||[msg]).map(s=>({role:'user',content:s.text||''})));}
-  const imagePrompt = admin && energyMode !== 'fog' ? explicitImagePrompt(msg.text) : '';
+  const mayIllustrate = source => !explicitImagePrompt(source.text) &&
+    !/(?:发|转发|发送)(?:到|给).{0,20}(?:群|好友|空间|动态)/.test(source.text || '');
+  const groupTargets = groupReplyTargets(msg);
+  if (groupTargets.length && await replyToGroupBatch(groupTargets, result, msg, {
+    agent, tools, throttle, policy, energyMode, epoch, validate, log, mayIllustrate,
+  })) return;
+  const imagePrompt = admin && energyMode !== 'fog'
+    ? (msg.sources || [msg]).map(source => explicitImagePrompt(source.text)).findLast(Boolean) || '' : '';
   const planned = result.generate;
   const validPlan = ['image', 'music', 'effect'].includes(planned?.kind) &&
     typeof planned.prompt === 'string' && !!planned.prompt.trim() && planned.prompt.length <= 1000;
@@ -123,6 +133,8 @@ export async function handlePlannedQQ(msg,key,{agent,store,tools,qq,throttle,log
   agent.reportDecision(msg.session,result.summary||((reply||image||voice)?'已生成当前会话表达':'选择安静'),'合并回复');
   if(!reply&&!image&&!voice){messageStage(store,msg,'silent');store.data.actions[key]={state:'silent',time:Date.now()};store.save();log('QQ：保持安静，原话已保存');return;}
   await throttle.wait(msg.session);validate();
+  if (energyMode !== 'fog' && reply && result.illustration && (msg.sources || [msg]).every(mayIllustrate) &&
+      await tryQQIllustration(tools, { prompt: result.illustration, text: reply, quote: result.quote === true, log })) return;
   if(image){try{await tools.call('qq_send_image',{kind:msg.kind,target:String(msg.target),imageId:image,quote:result.quote===true});}catch(error){log('QQ 图片未发送：'+error.message);}}
   if(voice&&!reply){await tools.call('qq_send_voice',{kind:msg.kind,target:String(msg.target),text:voice,quote:result.quote===true});}
   else if(reply){await tools.call('qq_reply_current',{text:reply,quote:result.quote===true,mentionSender:result.mention===true});}

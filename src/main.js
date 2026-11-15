@@ -161,6 +161,7 @@ async function start() {
     }
   };
   const tools = new SocialTools(config, store, qq, bili, tasks);
+  tools.mediaLog = log;
   tools.sleep = new Sleep(store, tools.feelings);
   const assertAwake = tools.sleep.assertAwake.bind(tools.sleep);
   tools.sleep.assertAwake = (...args) => { if (process.env.DAFEIYU_MANAGED && shutdownRequested) throw new Error('服务正在停止，已阻止新操作'); dailyBudget.assert();return assertAwake(...args); };

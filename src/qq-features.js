@@ -8,9 +8,12 @@ import { recordQzoneAction } from './qq-journal.js';
 import { acceptedSource, assertMemoryEpoch, userBlocked } from './user-controls.js';
 import { searchUserMemory } from './user-memory.js';
 import { checklistMarkdown } from './checklist-markdown.js';
-import { imageSendResult } from './image-description.js';
+import { imageSendResult, mediaReceipt } from './image-description.js';
 import { generateMedia } from './media-generation.js';
 import { canOperateQQ, incomingAllowed } from './qq-policy.js';
+import { chatText } from './reply-summary.js';
+import { messageStage } from './qq-processing.js';
+import { withoutRepeatedQuestions } from './proactive-dialogue.js';
 
 const str = description => ({ type: 'string', description });
 const target = { kind: { type: 'string', enum: ['private', 'group'] }, target: str('当前会话或已核实的目标ID') };
@@ -40,10 +43,12 @@ export const qqFeatureSchemas = [
   schema('web_read', '只读本轮搜索结果的公开网页文字，无用户登录态', { url: str('本轮搜索返回的网址') }, ['url']),
 ];
 const digest = value => createHash('sha256').update(value).digest('hex').slice(0, 24);
+const generationNames = { image: '图片', speech: '语音', music: '音乐', effect: '音效' };
 
 async function sendQQMedia(tools, args, data, isCurrent) {
   const group = args.kind === 'group';
-  const message = [...(isCurrent && args.quote ? [{ type: 'reply', data: { id: tools.current.id } }] : []), data];
+  const message = [...(isCurrent && args.quote ? [{ type: 'reply', data: { id: tools.current.id } }] : []),
+    ...(Array.isArray(data) ? data : [data])];
   const receipt = await tools.qq.call(group ? 'send_group_msg' : 'send_private_msg', {
     [group ? 'group_id' : 'user_id']: Number(args.target), message,
   });
@@ -51,54 +56,109 @@ async function sendQQMedia(tools, args, data, isCurrent) {
   return receipt;
 }
 
-function assertGeneratedSend(tools, kind, args) {
+function assertGeneratedSend(tools, kind, args, illustration = false) {
   tools.sleep?.assertAwake();
-  if (tools.operationEpoch != null) assertMemoryEpoch(tools.store, tools.operationEpoch);
+  const current = tools.current;
+  const epoch = current?.memoryEpoch ?? tools.operationEpoch;
+  if (epoch != null) assertMemoryEpoch(tools.store, epoch);
   const policy = tools.qq.policy?.() || tools.config.qq;
-  if (kind !== 'speech' && (!canOperateQQ(tools.current, policy) || !tools.generationKinds().includes(kind))) {
+  if (illustration && (!current || current.unreadReview || current.kind !== args.kind || current.target !== args.target ||
+      kind !== 'image' || !tools.config.qq?.enabled || !tools.config.mediaModels?.image)) {
+    throw Error('当前会话不能配生成图片');
+  }
+  if (!illustration && kind !== 'speech' && (!canOperateQQ(current, policy) || !tools.generationKinds().includes(kind))) {
     throw Error('当前管理员私聊未开启这项媒体生成能力');
   }
-  if (!incomingAllowed(policy, args.kind, args.target, args.target)) throw Error('该 QQ 会话已关闭');
+  if (!incomingAllowed(policy, args.kind, args.target, current?.sender ?? args.target)) throw Error('该 QQ 会话已关闭');
   if (kind !== 'image' && (policy.voiceEnabled === false || !tools.components.allowed('qq_send_voice'))) {
     throw Error('QQ 语音已关闭');
   }
   if (args.kind === 'private' && userBlocked(tools.store, args.target)) throw Error('该用户已屏蔽');
-  const current = tools.current;
   if (current && (current.sources || [current]).some(source =>
     !acceptedSource(tools.store, source, current.receivedAt) ||
     !incomingAllowed(policy, current.kind, current.target, source.sender))) throw Error('当前用户已屏蔽或旧消息已失效');
 }
 
-async function requestGeneratedMedia(tools, kind, text, args) {
-  assertGeneratedSend(tools, kind, args);
-  tools.store.reserve('model', tools.config.agent.maxModelCallsPerHour);
-  const media = await generateMedia(kind, tools.config.mediaModels[kind], text, tools.mediaRequest);
-  assertGeneratedSend(tools, kind, args);
-  return media;
+function mediaLogText(tools, input) {
+  let text = String(input).replace(/[\x00-\x1f\x7f]+/g, ' ');
+  const { apiKey, wsToken, mediaModels = {} } = tools.config;
+  for (const secret of [apiKey, wsToken, ...Object.values(mediaModels).map(profile => profile.apiKey)]) {
+    if (typeof secret === 'string' && secret.length >= 8) text = text.split(secret).join('[已隐藏]');
+  }
+  return text.replace(/\bBearer [^\s]+/gi, 'Bearer [已隐藏]');
 }
 
-async function generateForCurrent(tools, args) {
+async function requestGeneratedMedia(tools, kind, text, args, illustration = false) {
+  assertGeneratedSend(tools, kind, args, illustration);
+  tools.store.reserve('model', tools.config.agent.maxModelCallsPerHour);
+  const profile = tools.config.mediaModels[kind];
+  const name = generationNames[kind];
+  const started = Date.now();
+  tools.mediaLog?.(`媒体生成 · ${name} · 发出请求 · 模型 ${mediaLogText(tools, profile.model)}`);
+  tools.mediaLog?.(`媒体生成 · ${name} · 提示词：${mediaLogText(tools, String(text).trim().slice(0, 1000))}`);
+  try {
+    const media = await generateMedia(kind, profile, text, tools.mediaRequest);
+    assertGeneratedSend(tools, kind, args, illustration);
+    return { ...media, elapsed: ((Date.now() - started) / 1000).toFixed(2) };
+  } catch (error) {
+    tools.mediaLog?.(`媒体生成 · ${name} · 失败 · ${((Date.now() - started) / 1000).toFixed(2)} 秒 · ${mediaLogText(tools, error.message)}`);
+    throw error;
+  }
+}
+
+async function generateForCurrent(tools, args, illustration = false) {
   const current = tools.current;
   const kind = args.mediaKind;
-  assertGeneratedSend(tools, kind, args);
+  assertGeneratedSend(tools, kind, args, illustration);
   const image = kind === 'image';
   if (image ? tools.currentImageAttempted : tools.currentAttempted) return { skipped: true, reason: '本轮已经回复' };
   if (image) tools.media.assertReadable();
   return tools.store.once(`${current.key}:generate-media`, async () => {
     tools.outgoing();
-    const { bytes, mime } = await requestGeneratedMedia(tools, kind, args.prompt, args);
+    const { bytes, mime, elapsed } = await requestGeneratedMedia(tools, kind, args.prompt, args, illustration);
     const fileData = bytes.toString('base64');
     const asset = image ? tools.media.ingest(`data:${mime};base64,${fileData}`, '生成画面：' + args.prompt, tools.scope) : null;
+    const name = generationNames[kind];
+    const details = asset ? `图片 ID ${asset.id}` : `${mime} · ${bytes.length} 字节`;
+    tools.mediaLog?.(`媒体生成 · ${name} · 完成 · ${elapsed} 秒 · ${details}`);
     tools.currentAttempted = true;
     if (image) tools.currentImageAttempted = true;
-    const receipt = await sendQQMedia(tools, args, {
+    const segments = [{
       type: image ? 'image' : 'record', data: { file: 'base64://' + fileData },
-    }, true);
+    }];
+    const caption = illustration ? args.caption : '';
+    if (caption) segments.unshift({ type: 'text', data: { text: caption } });
+    const receipt = await sendQQMedia(tools, args, segments, true);
     if (asset) tools.media.markSent(asset.id);
+    tools.mediaLog?.(`媒体生成 · ${name} · QQ 已确认发送 · ${details} · 消息 ID ${receipt.message_id}`);
     const summary = asset ? `[图片 ${asset.id}]` : kind === 'music' ? '[音乐语音]' : '[音效语音]';
-    tools.store.appendHistory(current.session, 'assistant', summary, tools.config.agent.historyMessages);
+    tools.store.appendHistory(current.session, 'assistant', caption ? caption + '\n' + summary : summary, tools.config.agent.historyMessages);
     return asset ? imageSendResult(asset.id, receipt) : receipt;
   });
+}
+
+export async function tryQQIllustration(tools, { prompt, text, quote, log }) {
+  const current = tools.current;
+  if (!tools.config.mediaModels?.image || !current || current.unreadReview || typeof prompt !== 'string' ||
+      !prompt.trim() || prompt.length > 1000 || typeof text !== 'string' || !text.trim()) return false;
+  try {
+    const caption = withoutRepeatedQuestions(tools.store, current.session, chatText(text));
+    if (!caption.trim()) return false;
+    tools.sleep?.assertTemporalReply?.(caption, false);
+    messageStage(tools.store, current, 'sending');
+    const result = await generateForCurrent(tools, {
+      kind: current.kind, target: current.target, quote, mediaKind: 'image', prompt, caption,
+    }, true);
+    const receipt = result?.[mediaReceipt];
+    if (!receipt) return ['sent', 'pending', 'uncertain'].includes(result?.state) ? result.state : false;
+    tools.store.recordSent(current.kind, current.target, receipt, caption + ` [图片 ${result.imageId}]`);
+    tools.sleep?.recordOutgoing?.(current.kind, current.target, receipt);
+    messageStage(tools.store, current, 'replied');
+    return 'sent';
+  } catch (error) {
+    log('QQ 配图未完成：' + error.message);
+    return tools.currentAttempted ? 'uncertain' : false;
+  }
 }
 
 function knownUser(tools, id) {
@@ -267,12 +327,30 @@ export async function executeQQFeature(tools, name, args) {
     return tools.store.once(key, async () => {
       tools.outgoing();
       if (name === 'qq_send_voice') {
-        const audio = tools.config.mediaModels?.speech
-          ? (await requestGeneratedMedia(tools, 'speech', args.text, args)).bytes
-          : await (tools.synthesizeSpeech || synthesizeSpeech)(args.text, tools.media.directory, tools.config.social?.voiceName);
+        let generated;
+        if (tools.config.mediaModels?.speech) {
+          generated = await requestGeneratedMedia(tools, 'speech', args.text, args);
+        } else {
+          const started = Date.now();
+          const voice = tools.config.social?.voiceName;
+          tools.mediaLog?.(`媒体生成 · 语音 · 开始本地合成 · 音色 ${mediaLogText(tools, voice || '默认')}`);
+          tools.mediaLog?.(`媒体生成 · 语音 · 提示词：${mediaLogText(tools, args.text)}`);
+          try {
+            const bytes = await (tools.synthesizeSpeech || synthesizeSpeech)(args.text, tools.media.directory, voice);
+            generated = { bytes, mime: 'audio/wav', elapsed: ((Date.now() - started) / 1000).toFixed(2) };
+          } catch (error) {
+            tools.mediaLog?.(`媒体生成 · 语音 · 失败 · ${((Date.now() - started) / 1000).toFixed(2)} 秒 · ${mediaLogText(tools, error.message)}`);
+            throw error;
+          }
+        }
+        const audio = generated.bytes;
+        tools.mediaLog?.(`媒体生成 · 语音 · 完成 · ${generated.elapsed} 秒 · ${generated.mime} · ${audio.length} 字节`);
         data = { type: 'record', data: { file: 'base64://' + audio.toString('base64') } };
       }
       const receipt = await sendQQMedia(tools, args, data, isCurrent);
+      if (name === 'qq_send_voice') {
+        tools.mediaLog?.(`媒体生成 · 语音 · QQ 已确认发送 · 消息 ID ${receipt.message_id}`);
+      }
       if (name === 'qq_send_image') tools.media.markSent(args.imageId);
       tools.store.appendHistory(`qq:${args.kind === 'group' ? 'group' : 'user'}:${args.target}`, 'assistant', summary, tools.config.agent.historyMessages);
       return name === 'qq_send_image' ? imageSendResult(sentImageId,receipt) : receipt;

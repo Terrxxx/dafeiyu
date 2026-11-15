@@ -8,6 +8,7 @@ import { Store } from '../src/store.js';
 import { SocialTools } from '../src/tools.js';
 import { generateMedia } from '../src/media-generation.js';
 import { handleQQMessage } from '../src/qq-handler.js';
+import { mergeMessages } from '../src/message-buffer.js';
 
 const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jFz8AAAAASUVORK5CYII=', 'base64');
 const wave = Buffer.alloc(46);
@@ -73,7 +74,8 @@ test('planned QQ generation uses image and native record segments, and only admi
       if (kind === 'fallback-image') return { image: 'bad1d0', reply: '发给你了' };
       return kind === 'speech' ? { voice: '这是一段语音', reply: '' } : { generate: { kind, prompt: '合成样例' } };
     };
-    await handleQQMessage({ ...received, text: kind === 'fallback-image' ? explicitImage : '请生成测试媒体', id: kind }, 'test-' + kind, env);
+    const incoming = { ...received, text: kind === 'fallback-image' ? explicitImage : '请生成测试媒体', id: kind };
+    await handleQQMessage(mergeMessages([incoming]), 'test-' + kind, env);
   }
   assert.deepEqual(sent.map(entry => entry.args.message[0].type), ['image', 'image', 'record', 'record', 'record']);
   assert.ok(sent.every(entry => entry.name === 'send_private_msg'));
@@ -87,4 +89,47 @@ test('planned QQ generation uses image and native record segments, and only admi
   assert.ok(!tools.schemas.some(schema => schema.function.name === 'qq_generate_media'));
   await assert.rejects(tools.call('qq_generate_media', { mediaKind: 'music', prompt: '禁止越权' }), /只有管理员/);
   assert.equal(requests.length, 5);
+});
+
+test('ordinary QQ conversation can send a generated illustration with a caption and auditable receipts', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dfy-qq-illustration-'));
+  const store = new Store(dir);
+  const config = {
+    mediaModels: { image: profiles.image }, qq: { enabled: true, adminUsers: ['123456'] },
+    agent: { historyMessages: 64, maxModelCallsPerHour: 0, maxOutgoingPerHour: 20 }, social: {},
+  };
+  const sent = [], logs = [], textReplies = [];
+  const qq = {
+    async call(name, args) { sent.push({ name, args }); return { message_id: 501 }; },
+    async send(_kind, _target, text) { textReplies.push(text); return { message_id: 502 }; },
+  };
+  const tools = new SocialTools(config, store, qq, {});
+  tools.mediaLog = line => logs.push(line);
+  t.after(() => { tools.components.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+  const description = '想象中的蓝色小房间，窗边有鱼缸';
+  tools.mediaRequest = async (_url, options) => {
+    assert.equal(JSON.parse(options.body).prompt, description);
+    return Response.json({ data: [{ b64_json: image.toString('base64') }] });
+  };
+  const agent = new Agent(config, store, tools);
+  agent.taskJSON = async protocol => {
+    assert.match(protocol, /你可以自主给当前回复配一张图/);
+    return { reply: '我想象的是蓝色小窝～', illustration: description };
+  };
+  const sender = '789012';
+  const message = { kind: 'private', sender, target: sender, session: 'qq:user:' + sender, id: '1', text: '大肥鱼你房间是什么样的呀', receivedAt: Date.now() };
+  const env = { agent, store, tools, qq, throttle: { wait: async () => {} }, log: line => logs.push(line) };
+  await handleQQMessage(message, 'room-success', env);
+  assert.deepEqual(sent[0].args.message.map(segment => segment.type), ['text', 'image']);
+  assert.equal(sent[0].args.message[0].data.text, '我想象的是蓝色小窝～');
+  assert.ok(store.data.sentMessages[501]);
+  assert.match(logs.join('\n'), /发出请求 · 模型 image-model/);
+  assert.ok(logs.some(line => line.includes(description)));
+  assert.match(logs.join('\n'), /完成 · \d+\.\d+ 秒 · 图片 ID [a-f0-9]{6}/);
+  assert.match(logs.join('\n'), /QQ 已确认发送.*消息 ID 501/);
+  tools.mediaRequest = async () => new Response('', { status: 503 });
+  await handleQQMessage({ ...message, id: '2' }, 'room-failure', env);
+  assert.deepEqual(textReplies, ['我想象的是蓝色小窝～']);
+  assert.equal(sent.length, 1);
+  assert.match(logs.join('\n'), /媒体生成 · 图片 · 失败.*HTTP 503/);
 });
