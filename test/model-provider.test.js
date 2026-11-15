@@ -104,6 +104,20 @@ test('manager keeps DeepSeek as default, saves custom settings and never checks 
   assert.equal(custom.bot.baseUrl, 'https://api.example.com/v1');
   assert.equal(custom.bot.customModel, 'provider/model');
   assert.doesNotMatch(JSON.stringify(custom), /custom-key-test/);
+  const stops = runtimeCalls.filter(row => row.operation === 'stop').length;
+  for (const change of [
+    { provider: 'deepseek' },
+    { provider: 'custom', baseUrl: 'https://other.example.com/v1' },
+    { provider: 'custom', baseUrl: 'https://api.example.com:8443/v1' },
+  ]) {
+    assert.equal((await call('/account/key', { ...change, apiKey: '' })).status, 400);
+  }
+  assert.equal(runtimeCalls.filter(row => row.operation === 'stop').length, stops);
+  assert.equal((await call('/account/key', { provider: 'custom', baseUrl: custom.bot.baseUrl,
+    model: 'provider/second', apiKey: '' })).status, 200);
+  assert.equal((await status()).value.bot.customModel, 'provider/second');
+  assert.equal((await call('/account/key', { model: 'provider/third' })).status, 200);
+  assert.equal((await status()).value.bot.customModel, 'provider/third');
   assert.equal(custom.daily.limitsSuspended, true);
   assert.equal(custom.daily.limits.tokenEnabled, false);
   assert.equal(custom.daily.limits.costEnabled, false);
@@ -131,7 +145,7 @@ test('manager keeps DeepSeek as default, saves custom settings and never checks 
   assert.equal(configured.effect.endpoint, 'https://audio.example.com/v1/sound-generation');
   assert.equal(configured.effect.apiKey, 'media-key-test');
   assert.equal(env.DAFEIYU_MODEL_PROVIDER, 'custom');
-  assert.equal(env.DEEPSEEK_MODEL, 'provider/model');
+  assert.equal(env.DEEPSEEK_MODEL, 'provider/third');
   assert.equal(env.DEEPSEEK_BASE_URL, custom.bot.baseUrl);
   assert.equal(env.DEEPSEEK_API_KEY, 'custom-key-test');
   assert.deepEqual(checkedKeys, ['Bearer deepseek-key-first']);

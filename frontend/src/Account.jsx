@@ -233,6 +233,9 @@ function ModelCredentials({ bot, notify, reload }) {
   const [baseUrl, setBaseUrl] = useState(bot.baseUrl || "");
   const [model, setModel] = useState(bot.customModel || "");
   const [key, setKey] = useState("");
+  const sameOrigin = provider !== "custom" ||
+    (URL.canParse(baseUrl) && URL.canParse(bot.baseUrl) && new URL(baseUrl).origin === new URL(bot.baseUrl).origin);
+  const keepKey = bot.keySet && provider === (bot.provider || "deepseek") && sameOrigin;
   return (
     <Card title="模型凭据" subtitle="保存后实例会停止，重新启动即可生效。">
       <Form submit={async (values) => {
@@ -258,7 +261,8 @@ function ModelCredentials({ bot, notify, reload }) {
             value={model} onChange={(e) => setModel(e.target.value)}
             placeholder="deepseek-flash" />
         </>}
-        <Field label="新的 API Key" name="apiKey" type="password" maxLength={300} required
+        <Field label="新的 API Key" name="apiKey" type="password" maxLength={300} required={!keepKey}
+          hint={keepKey ? "留空继续使用已保存的 API Key。" : "请填写当前供应商的 API Key。"}
           autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} />
         <button className="primary">保存模型配置</button>
       </Form>

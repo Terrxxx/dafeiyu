@@ -70,18 +70,16 @@ export class Tenants {
   return this.exclusive(name, async () => {
    const bot = this.accounts.bot(name);
    if (!bot) throw Error('请先创建大肥鱼');
-   if (provider === undefined && modelSettings(bot.secrets).provider === 'custom') {
-    provider = 'custom';
-    baseUrl = bot.secrets.baseUrl;
-    model = bot.secrets.customModel;
-   }
-   provider ??= 'deepseek';
+   const previous = modelSettings(bot.secrets);
+   provider ??= previous.provider;
    if (!['deepseek', 'custom'].includes(provider)) throw Object.assign(Error('模型供应商无效'), { status: 400 });
-   if (typeof apiKey !== 'string' || apiKey.length < 8 || apiKey.length > 300 || /[\s\x00-\x1f\x7f]/.test(apiKey)) {
-    throw Object.assign(Error('请输入有效的 API Key'), { status: 400 });
-   }
-   const secrets = { ...bot.secrets, apiKey, provider };
+   const sameProvider = provider === previous.provider;
+   const secrets = { ...bot.secrets, provider };
    if (provider === 'custom') {
+    if (sameProvider) {
+     if (baseUrl === undefined) baseUrl = previous.baseUrl;
+     if (model === undefined) model = bot.secrets.customModel;
+    }
     if (model !== undefined && (typeof model !== 'string' || model.length > 128 || /[^\x21-\x7e]/.test(model))) {
      throw Object.assign(Error('模型 ID 必须为不含空格的可见字符'), { status: 400 });
     }
@@ -91,6 +89,16 @@ export class Tenants {
     delete secrets.baseUrl;
     delete secrets.customModel;
    }
+   const sameOrigin = new URL(modelSettings(secrets).baseUrl).origin === new URL(previous.baseUrl).origin;
+   if (apiKey === undefined || apiKey === '') {
+    if (!sameProvider || !sameOrigin || !bot.secrets.apiKey) {
+     throw Object.assign(Error('更换供应商或 API 地址时，请填写对应的 API Key'), { status: 400 });
+    }
+    apiKey = bot.secrets.apiKey;
+   } else if (typeof apiKey !== 'string' || apiKey.length < 8 || apiKey.length > 300 || /[\s\x00-\x1f\x7f]/.test(apiKey)) {
+    throw Object.assign(Error('请输入有效的 API Key'), { status: 400 });
+   }
+   secrets.apiKey = apiKey;
    const balance = provider === 'custom' ? customCredits() : await checkBalance(apiKey, this.request);
    await this.runtime('stop', name);
    const directory = this.directory(name);
