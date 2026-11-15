@@ -65,22 +65,26 @@ test('planned QQ generation uses image and native record segments, and only admi
     kind: 'private', sender, target: sender, session: 'qq:user:' + sender, receivedAt: Date.now(),
   };
   const env = { agent, store, tools, qq, throttle: { wait: async () => {} }, log() {} };
-  for (const kind of ['image', 'music', 'effect', 'speech']) {
-    agent.taskJSON = async (_instructions, material) => {
+  const explicitImage = '生成一张画着海边小猫的图片';
+  for (const kind of ['image', 'fallback-image', 'music', 'effect', 'speech']) {
+    agent.taskJSON = async (instructions, material) => {
       assert.match(material, /当前允许的媒体生成/);
+      assert.match(instructions, /单独的 image 字段只填写资料中明确提供的已有图片 ID/);
+      if (kind === 'fallback-image') return { image: 'bad1d0', reply: '发给你了' };
       return kind === 'speech' ? { voice: '这是一段语音', reply: '' } : { generate: { kind, prompt: '合成样例' } };
     };
-    await handleQQMessage({ ...received, text: '请生成测试媒体', id: kind }, 'test-' + kind, env);
+    await handleQQMessage({ ...received, text: kind === 'fallback-image' ? explicitImage : '请生成测试媒体', id: kind }, 'test-' + kind, env);
   }
-  assert.deepEqual(sent.map(entry => entry.args.message[0].type), ['image', 'record', 'record', 'record']);
+  assert.deepEqual(sent.map(entry => entry.args.message[0].type), ['image', 'image', 'record', 'record', 'record']);
   assert.ok(sent.every(entry => entry.name === 'send_private_msg'));
-  assert.equal(requests[1].headers['xi-api-key'], 'audio-test-key');
-  assert.deepEqual(requests[1].body, { model_id: 'music_v2', prompt: '合成样例', music_length_ms: 12000 });
-  assert.deepEqual(requests[2].body, { model_id: 'sound-model', text: '合成样例', duration_seconds: 5 });
-  assert.equal(requests[3].body.response_format, 'wav');
+  assert.equal(requests[1].body.prompt, explicitImage);
+  assert.equal(requests[2].headers['xi-api-key'], 'audio-test-key');
+  assert.deepEqual(requests[2].body, { model_id: 'music_v2', prompt: '合成样例', music_length_ms: 12000 });
+  assert.deepEqual(requests[3].body, { model_id: 'sound-model', text: '合成样例', duration_seconds: 5 });
+  assert.equal(requests[4].body.response_format, 'wav');
   const other = { ...received, id: 'other', key: 'other', sender: '234567', target: '234567', session: 'qq:user:234567' };
   tools.begin(other.session, other);
   assert.ok(!tools.schemas.some(schema => schema.function.name === 'qq_generate_media'));
   await assert.rejects(tools.call('qq_generate_media', { mediaKind: 'music', prompt: '禁止越权' }), /只有管理员/);
-  assert.equal(requests.length, 4);
+  assert.equal(requests.length, 5);
 });

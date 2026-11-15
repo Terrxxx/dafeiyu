@@ -9,6 +9,16 @@ import { qzoneReadIntent, readRequestedSpace, qzoneReadMaterial } from './qzone-
 import {messageStage} from './qq-processing.js';
 import {sourceAddress} from './group-addressing.js';
 import {crossSendIntent,handleCrossSend,crossSendPromise} from './qq-cross-send.js';
+
+function explicitImagePrompt(text) {
+  const prompt = String(text || '').trim();
+  if (/(?:先不|暂时不|别|不要)(?:发图|发送|发给|发到|发出来)|(?:只|仅)(?:描述|提供提示词|写提示词)/.test(prompt)) return '';
+  const command = prompt.replace(/^(?:大肥鱼|鱼鱼|请|麻烦|拜托|你|能不能|可以|帮我|给我|用生图功能|用生图模型|再|[，,：:\s])+/, '');
+  const asksToDraw = /^(?:生图(?:[，,：:\s]|$)|画(?:一[张幅]|个|只|张|幅|一下))/.test(command);
+  const asksToGenerate = /^(?:生成|制作|绘制|做|出)(?!了|的)[^。！？\n]{0,64}(?:图片|图像|插画|海报|头像|表情包|一张图|一幅画)/.test(command);
+  return asksToDraw || asksToGenerate ? prompt : '';
+}
+
 export async function handlePlannedQQ(msg,key,{agent,store,tools,qq,throttle,log},pictures,energyMode,epoch,{publication,identityReply}={}) {
   // Save source text before any model call, including silent turns and provider failures.
   store.appendHistory(msg.session,'user',`${msg.name||msg.sender}（${msg.sender}）：${msg.text}${pictures?'\n'+pictures:''}`,agent.config.agent.historyMessages);
@@ -63,8 +73,14 @@ export async function handlePlannedQQ(msg,key,{agent,store,tools,qq,throttle,log
   try { agent.feelings.applyChat(msg,{users:Array.isArray(result.users)?result.users:[]},'chat:'+key); }
   catch(error){store.audit('chat-analysis-rejected',{reason:error.message});}
   if(Array.isArray(result.style)&&result.style.length){agent.personality.applyReflection(msg.session,result.style,(msg.sources||[msg]).map(s=>({role:'user',content:s.text||''})));}
-  if (admin && energyMode !== 'fog' && result.generate) {
-    const { kind, prompt } = result.generate;
+  const imagePrompt = admin && energyMode !== 'fog' ? explicitImagePrompt(msg.text) : '';
+  const planned = result.generate;
+  const validPlan = ['image', 'music', 'effect'].includes(planned?.kind) &&
+    typeof planned.prompt === 'string' && !!planned.prompt.trim() && planned.prompt.length <= 1000;
+  let generation = validPlan ? planned : null;
+  if (imagePrompt && generation?.kind !== 'image') generation = { kind: 'image', prompt: imagePrompt };
+  if (admin && energyMode !== 'fog' && generation) {
+    const { kind, prompt } = generation;
     if (!tools.generationKinds().includes(kind)) {
       await send('这项媒体生成没开启。可以在「密钥与安全」里配置。');
       return;
@@ -72,7 +88,8 @@ export async function handlePlannedQQ(msg,key,{agent,store,tools,qq,throttle,log
     await throttle.wait(msg.session);
     validate();
     try {
-      await tools.call('qq_generate_media', { mediaKind: kind, prompt, quote: result.quote === true });
+      const sent = await tools.call('qq_generate_media', { mediaKind: kind, prompt, quote: result.quote === true });
+      if (sent?.imageId) log('QQ 生图：已收到图片发送回执，图片 ID ' + sent.imageId);
     } catch (error) {
       log('QQ 媒体生成或发送未完成：' + error.message);
       if (!tools.currentAttempted) await send('这次没生成成功。' + error.message);
