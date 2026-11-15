@@ -105,8 +105,9 @@ export class Feelings {
         // Keep only source words, never a model's invented biography. Scope remains attached.
         const sharedFact = portableFact(memory, text);
         const existing = u.memories.find(m => m.scope === msg.session && m.quote === memory.quote);
-        if (existing) { if (sharedFact) existing.sharedFact = sharedFact; continue; }
-        u.memories.push({ scope: msg.session, kind: memory.kind, quote: memory.quote, ...(sharedFact ? { sharedFact } : {}), time: this.now() });
+        const important = memory.kind === 'shared_topic' && memory.important === true;
+        if (existing) { if (sharedFact) existing.sharedFact = sharedFact; if (important) existing.important = true; continue; }
+        u.memories.push({ scope: msg.session, kind: memory.kind, quote: memory.quote, ...(sharedFact ? { sharedFact } : {}), ...(important ? { important } : {}), time: this.now() });
       }
       // Durable source memories are retained; request-time retrieval selects what to send.
     }

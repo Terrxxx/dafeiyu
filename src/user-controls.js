@@ -40,8 +40,8 @@ export function syncUserControls(store) {
       const user = store.data.feelings?.users?.[id];
       const groups = new Set([...(user?.groups || []), ...(user?.memories || []).map(m => m.scope).filter(scope => scope?.startsWith('qq:group:'))]);
       if (store.data.feelings?.users) delete store.data.feelings.users[id];
-      if (store.data.proactiveDialogue) delete store.data.proactiveDialogue['qq:user:'+id];
       if (store.data.crossSendReceipts) delete store.data.crossSendReceipts['qq:user:'+id];
+      if (store.data.publicationDrafts) delete store.data.publicationDrafts['qq:user:'+id];
       if (store.data.sleep?.chatTargets) delete store.data.sleep.chatTargets[`private:${id}`];
       if (store.data.sleep?.lastSleep?.chats) store.data.sleep.lastSleep.chats = store.data.sleep.lastSleep.chats.filter(chat => chat.kind !== 'private' || chat.target !== id);
       for (const [key, media] of Object.entries(store.data.media || {})) if (media.scopes?.includes(`qq:user:${id}`)) {
@@ -50,6 +50,7 @@ export function syncUserControls(store) {
         if (/^[a-f0-9]{64}$/.test(key) && extension) { const file = path.join(path.dirname(store.file), 'media', `${key}.${extension}`); if (fs.existsSync(file)) fs.unlinkSync(file); }
       }
       for (const key of [`qq:user:${id}`, ...groups]) {
+        if (store.data.proactiveDialogue) delete store.data.proactiveDialogue[key];
         if (store.data.histories) delete store.data.histories[key];
         if (store.data.sleepSummaries) delete store.data.sleepSummaries[key];
         if (store.data.personality?.conversations) delete store.data.personality.conversations[key];

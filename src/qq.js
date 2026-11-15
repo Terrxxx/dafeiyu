@@ -13,12 +13,13 @@ export function parseMessage(event, config, skipped = () => {}) {
   if (!Array.isArray(event.message)) { skipped('消息格式不是 array，请检查 NapCat 配置'); return null; }
   const mentioned = event.message.some(x => x.type === 'at' && String(x.data?.qq) === String(event.self_id));
   if (group && config.requireMentionInGroup && !mentioned) { skipped('群消息未 @ 机器人'); return null; }
-  const text = event.message.filter(x => x.type === 'text').map(x => x.data.text).join('').trim().slice(0, 6000);
+  const memoryText = event.message.filter(x => x.type === 'text').map(x => x.data.text).join('');
+  const text = memoryText.trim().slice(0, 6000);
   const images = event.message.filter(x => x.type === 'image').map(x => ({ file: x.data.file, url: x.data.url })).slice(0, 3);
   if (!text && !images.length) { skipped('消息没有可处理的文本或图片'); return null; }
   const atUserIds=event.message.filter(x=>x.type==='at').map(x=>String(x.data?.qq));const replyId=event.message.find(x=>x.type==='reply')?.data?.id;
   return { selfId:String(event.self_id),atUserIds,replyId,addressedElsewhere:group&&atUserIds.some(id=>id!=='all')&&!mentioned,kind: group ? 'group' : 'private', target: String(group ? event.group_id : event.user_id),
-    session: group ? `qq:group:${event.group_id}` : `qq:user:${event.user_id}`, text,
+    session: group ? `qq:group:${event.group_id}` : `qq:user:${event.user_id}`, text, memoryText,
     sender: String(event.user_id), groupCard:group?String(event.sender?.card||'').slice(0,80):undefined, qqNickname:typeof event.sender?.nickname==='string'?event.sender.nickname.slice(0,100):undefined, name: String(event.sender?.nickname || event.user_id), id: String(event.message_id), mentioned, images, receivedAt: Date.now() };
 }
 

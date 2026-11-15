@@ -13,7 +13,7 @@ export class HarnessAgent extends Agent {
     super(config, store, tools); this.runtime = runtime;
   }
   prompt(session, input, skipLast = false, history = true, cacheStaticPrompt = false) {
-    const context = historyMarkdown(history ? this.context(session, skipLast) : []);
+    const context = historyMarkdown(history ? this.context(session, skipLast) : [], {ageAt:Date.now()});
     const time = this.timeContext(session);
     // Autonomous routines repeat their task instructions. Keep that stable prefix
     // ahead of time, candidates and changing history for DeepSeek's prefix cache.
@@ -35,7 +35,7 @@ export class HarnessAgent extends Agent {
     const epoch = memoryEpoch(this.store);
     this.tools.sleep?.assertAwake();
     let reply;
-    const recent = historyMarkdown(this.context(session).slice(-4)).slice(0, 1600);
+    const recent = historyMarkdown(this.context(session).slice(-4),{ageAt:Date.now()}).slice(0, 1600);
     for (let attempt = 0; attempt < 2; attempt++) {
       const text = await this.runtime.run(`仅判断是否接话，不回复正文、不调用工具。私聊明确求助优先回应，群聊无必要可保持安静。历史资料：${recent}\n当前消息：${input.slice(0, 2400)}\n只输出JSON {"reply":true,"summary":"最多80字的回应意图"}，不接话时reply=false。${attempt ? '上次格式无效，请严格遵守。' : ''}`, { json: true, internal: true, maxTokens: attempt ? 256 : 160 });
       assertMemoryEpoch(this.store, epoch);

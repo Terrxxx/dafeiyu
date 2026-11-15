@@ -14,6 +14,8 @@ import { atomicWriteFile } from './atomic-file.js';
 import { componentCatalog, componentEnabled, normalizeComponents } from './component-catalog.js';
 import { readUserControls, writeUserControl, purgeUserArchives } from './user-controls.js';
 import { readUserMemory, saveUserMemory, deleteUserMemory, userMemoryRevision, withUserLock } from './user-memory.js';
+import { personMemoryOverview } from './person-memory.js';
+import { memoryDateLabel, notableMemory } from './memory-age.js';
 import { relationBase, normalizeEmotion, effectiveMood } from './emotion-state.js';
 import { LocalWeather } from './weather.js';
 import { lifeView, saveLifeControls } from './life-controls.js';
@@ -118,13 +120,16 @@ export async function startWebPanel({ root = ROOT, port = 3081, controller, data
         // Details are for the local administrator, never fed back into the agent.
         // Do not attach whole group transcripts containing unrelated participants.
         const ledger = readUserMemory(dataDirectory, memoryId); const forgottenAt = controls[memoryId]?.forgottenAt || 0;
+        if (url.searchParams.get('view') === 'overview') {
+          return send(200, personMemoryOverview(ledger, Number(url.searchParams.get('page') || 1)));
+        }
         return send(200, { id: memoryId, name: user.name || memoryId,remark:user.remark,remarkRevision:user.remarkRevision,nicknameVerified:user.nicknameVerified, affinity: user.affinity, trust: user.trust,
           familiarity: user.familiarity, emotions: user.emotions, contactPaused: user.contactPaused, lastIncoming: user.lastIncoming,
           memories: user.memories || [], blocked: user.blocked,
           checklist: { sections: ledger.sections, updatedAt: ledger.updatedAt, revision: userMemoryRevision(ledger) },
           history: (s.histories?.[scope] || []).filter(item => ['user', 'assistant'].includes(item.role))
             .filter(item => !forgottenAt || new Date(item.time).getTime() > forgottenAt)
-            .slice(-100).map(({ role, content, time }) => ({ role, content, time })),
+            .slice(-100).map(({ role, content, time }) => ({ role, content, time, displayTime: memoryDateLabel(time, Date.now(), notableMemory(content)) })),
           summaries: (!forgottenAt || s.userControlsApplied?.[memoryId]?.forgottenAt === forgottenAt ? s.sleepSummaries?.[scope] || [] : []).slice(-12).map(({ day, text, count }) => ({ day, text, count })),
         });
       }

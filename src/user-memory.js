@@ -58,7 +58,9 @@ export function recordUserActivity(store, msg, role = 'user') {
   for (const source of msg.sources || [msg]) {
     const id = String(source.sender); if (!userId(id) || controls[id]?.blocked) continue;
     const time = Number(source.receivedAt || msg.receivedAt || Date.now()); if (time <= (controls[id]?.forgottenAt || 0)) continue;
-    const entry = { id: `qq:${msg.session}:${source.id}:${role}`, owner: id, scope: msg.session, role, text: String(source.text || '[图片]').slice(0, 6000), time };
+    const text = String(source.memoryText ?? source.text ?? '');
+    const entry = { id: `qq:${msg.session}:${source.id}:${role}`, owner: id, scope: msg.session, role,
+      text: text + (source.images?.length && role === 'user' ? ` [图片×${source.images.length}]` : '') || '[图片]', time };
     fs.appendFileSync(path.join(directory, `${day(time)}.jsonl`), JSON.stringify(entry) + '\n');
   }
 }
@@ -107,10 +109,12 @@ export function consolidateUserMemories(store, now = Date.now()) {
     changed.push(['qq-activity', fs.statSync(footprint).size]);
   }
   for (const [id, user] of Object.entries(store.data.feelings?.users || {})) {
-    if (day(user.lastIncoming || 0) !== day(now) && !batches.has(id)) continue;
+    if (index.lifetimeFacts && day(user.lastIncoming || 0) !== day(now) && !batches.has(id)) continue;
     for (const fact of user.memories || []) {
       if (controls[id]?.editedScopes?.[fact.scope] && controls[id].editedScopes[fact.scope] >= (fact.time || 0)) continue;
-      add({ id: `fact:${hash(JSON.stringify([id, fact.scope, fact.quote]))}`, owner: id, scope: fact.scope, role: 'fact', text: fact.quote, time: fact.time || user.lastIncoming || now });
+      const key = [id, fact.scope, fact.quote];
+      if (fact.important) key.push(true);
+      add({ id: `fact:${hash(JSON.stringify(key))}`, owner: id, scope: fact.scope, role: 'fact', important: fact.important, text: fact.quote, time: fact.time || user.lastIncoming || now });
     }
   }
   let users = 0;
@@ -125,11 +129,12 @@ export function consolidateUserMemories(store, now = Date.now()) {
     for (const [key, items] of sections) {
       const split = key.lastIndexOf('|'); const scope = key.slice(0, split); const date = key.slice(split + 1);
       const previous = ledger.sections[scope]?.text || '';
-      const body = items.map(entry => `- ${entry.role === 'fact' ? '已确认记忆' : entry.role === 'assistant' ? '大肥鱼' : entry.role === 'activity' ? '与用户的互动' : '用户'}（${new Date(entry.time).toISOString()}）：${entry.text.replace(/\n/g, '\n  ')}`).join('\n');
-      ledger.sections[scope] = { text: `${previous}${previous ? '\n\n' : ''}## ${date} · 记忆清单\n${body}`, updatedAt: now };
+      const body = items.map(entry => `- ${entry.role === 'fact' ? entry.important ? '重要记忆' : '已确认记忆' : entry.role === 'assistant' ? '大肥鱼' : entry.role === 'activity' ? '与用户的互动' : '用户'}（${new Date(entry.time).toISOString()}）：${entry.text.replace(/\n/g, '\n  ')}`).join('\n');
+      ledger.sections[scope] = { ...ledger.sections[scope], text: `${previous}${previous ? '\n\n' : ''}## ${date} · 记忆清单\n${body}`, updatedAt: now };
     }
     if (count) { ledger.events = [...seen]; ledger.updatedAt = now; saveUserMemory(directory, id, ledger); users++; }
   });
   for (const [key, size] of changed) index[key] = size;
+  index.lifetimeFacts = true;
   atomicWriteFile(indexFile, JSON.stringify(index)); return users;
 }

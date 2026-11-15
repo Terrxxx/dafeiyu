@@ -23,14 +23,15 @@ test('沉默、API失败都保留原话；非管理员伪造能力请求不能�
  const f=setup(t,[{reply:'',capabilities:['avatar','qq']}]);await f.handle();assert.equal(f.requests.length,1);assert.equal(f.sends.length,0);assert.ok(f.store.data.histories[f.msg.session][0].content.includes(f.msg.text));
  f.agent.request=async()=>{throw Error('本地假故障');};await assert.rejects(()=>f.handle({...f.msg,text:'这条也必须保存',id:'two'},'turn-2'),/本地假故障/);assert.ok(f.store.data.histories[f.msg.session].some(x=>x.content.includes('这条也必须保存')));
 });
-test('检索完整旧归档、重复清单去重、群私聊隔离，不修改任何存档或用户记忆',t=>{
+test('检索完整旧归档，跨聊仅载入发言人相关的私聊摘录，存档不变',t=>{
  const f=setup(t),owner=f.agent.feelings.user('123456');owner.name='朋友';owner.memories=Array.from({length:35},(_,i)=>({scope:f.msg.session,quote:'长期记忆'+i,kind:'preference',time:Date.now()-50000}));
  fs.mkdirSync(path.join(f.dir,'memory'),{recursive:true});const record={id:'archive-only',scope:f.msg.session,role:'user',content:'朋友（123456）：上周种的向日葵开花了',time:'2026-10-01T01:02:03.123Z'};fs.writeFileSync(path.join(f.dir,'memory/2026-10-01.jsonl.gz'),gzipSync(JSON.stringify(record)+'\n'));
  f.store.appendHistory('qq:user:654321','user','另一个人的私密火星暗号');f.store.appendHistory('qq:group:88888','user','群里公开的话');
  const before=JSON.stringify(f.store.data.histories),memories=JSON.stringify(owner.memories),archive=fs.readFileSync(path.join(f.dir,'memory/2026-10-01.jsonl.gz'));
  const packet=conversationPacket(f.agent,{...f.msg,text:'向日葵怎么样了'});assert.ok(packet.text.includes('上周种的向日葵开花了'));assert.ok(!packet.text.includes('火星暗号'));assert.ok(!packet.text.includes('群里公开的话'));assert.equal(JSON.stringify(f.store.data.histories),before);assert.equal(JSON.stringify(owner.memories),memories);assert.deepEqual(fs.readFileSync(path.join(f.dir,'memory/2026-10-01.jsonl.gz')),archive);
  f.agent.feelings.applyChat(f.msg,{users:[{id:'123456',reaction:'friendly',evidence:'喜欢草莓',memories:[{kind:'preference',quote:'喜欢草莓'}]}]},'new-fact');assert.equal(owner.memories.length,36);
- const group=conversationPacket(f.agent,{kind:'group',session:'qq:group:88888',sender:'123456',text:'向日葵'});assert.ok(!group.text.includes('上周种的向日葵开花了'));
+ const group=conversationPacket(f.agent,{kind:'group',session:'qq:group:88888',sender:'123456',text:'向日葵'});
+ assert.ok(group.text.includes('上周种的向日葵开花了'));assert.ok(group.text.includes('不得复述'));assert.ok(!group.text.includes('火星暗号'));
 });
 test('资料删除/屏蔽发生在生成中则拒绝发送；睡眠不请求',async t=>{
  const f=setup(t);f.agent.request=async()=>{writeUserControl(f.dir,'123456',{blocked:true});return Response.json({choices:[{message:{content:'{"reply":"旧回复"}'}}]});};await assert.rejects(()=>f.handle(),/记忆或屏蔽/);assert.equal(f.sends.length,0);

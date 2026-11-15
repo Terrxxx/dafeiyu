@@ -7,6 +7,7 @@ import {
 } from "../../src/activity-catalog.js";
 import { UsageCard, UsageCategoryCard, SettingCostHint } from "./Usage.jsx";
 import MessageStatus from './MessageStatus.jsx';
+import PersonMemoryOverview from './PersonMemoryOverview.jsx';
 import behaviorPresets from "./behavior-presets.json";
 import { createPortal } from "react-dom";
 import personaPresets from "./persona-presets.json";
@@ -1317,10 +1318,11 @@ function MemoryDetail({ id, back, notify }) {
           <button>保存备注</button>
         </Form>
       </Card>
+      <PersonMemoryOverview key={id} id={id} />
       <div className="two-col">
         <Card
           title="记忆清单"
-          subtitle="来源独立保存，跨会话隐私边界保持不变。"
+          subtitle="按会话来源查看与编辑整理记录。"
         >
           <label className="field">
             <span>记忆来源</span>
@@ -1380,7 +1382,7 @@ function MemoryDetail({ id, back, notify }) {
                   <div key={i} className={"chat " + h.role}>
                     <small>
                       {h.role === "assistant" ? "大肥鱼" : u.name} ·{" "}
-                      {time(h.time)}
+                      {h.displayTime ? [h.displayTime.day, h.displayTime.time].filter(Boolean).join(' ') : time(h.time)}
                     </small>
                     <p>{h.content}</p>
                   </div>
@@ -1393,12 +1395,6 @@ function MemoryDetail({ id, back, notify }) {
           <Card title="长期印象">
             {u.memories?.map((m, i) => (
               <p key={i}>{m.quote || m.text}</p>
-            ))}
-            {u.summaries?.map((s, i) => (
-              <div key={i}>
-                <small>{s.day}</small>
-                <p>{s.text}</p>
-              </div>
             ))}
           </Card>
         </div>

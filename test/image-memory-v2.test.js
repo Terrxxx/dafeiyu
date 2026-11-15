@@ -19,7 +19,7 @@ test('已发送图片只返回短ID、历史不带描述，描述可按需取回
 test('识图100字符含emoji，记忆清单提取用户与日期不重复且秒级、正文不丢',()=>{
  assert.equal(Array.from(imageDescription('🐟'.repeat(200))).length,100);
  const text='## 2026-10-28 · 记忆清单\n- 用户（2026-10-28T11:00:00.123Z）：喜欢草莓\n- 大肥鱼（2026-10-28T11:01:00.456Z）：记住啦\n- 已确认记忆（2026-10-28T11:02:00.789Z）：不要在群里提\n  第二行原文';
- const out=checklistMarkdown(text,{id:'123456',name:'朋友'},{data:{}},'qq:user:123456');assert.equal((out.match(/2026-10-28/g)||[]).length,1);assert.equal((out.match(/朋友\(123456\)/g)||[]).length,1);assert.ok(out.includes('19:00:00'));assert.ok(!out.includes('.123'));for(const s of ['喜欢草莓','记住啦','不要在群里提','第二行原文'])assert.ok(out.includes(s));
+ const out=checklistMarkdown(text,{id:'123456',name:'朋友'},{data:{}},'qq:user:123456',Date.parse('2026-10-29T00:00:00Z'));assert.equal((out.match(/2026-10-28/g)||[]).length,1);assert.equal((out.match(/朋友\(123456\)/g)||[]).length,1);assert.ok(out.includes('19:00:00'));assert.ok(!out.includes('.123'));for(const s of ['喜欢草莓','记住啦','不要在群里提','第二行原文'])assert.ok(out.includes(s));
  const custom='手工备注\n## 特别记录\n不要改动';assert.equal(checklistMarkdown(custom,{id:'123456',name:'朋友'},{data:{}},'qq:user:123456'),custom);
 });
 test('时间元数据到秒，用户正文中的毫秒原文保持；两种识图引擎均硬截100字符',async()=>{

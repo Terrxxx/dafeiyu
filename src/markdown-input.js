@@ -1,3 +1,5 @@
+import { memoryDateLabel, notableMemory } from './memory-age.js';
+
 export function block(text) {
   const value = String(text ?? '');
   const runs = value.match(/`+/g) || [];
@@ -32,7 +34,7 @@ const parts = at => {
   const date = new Date(n + 8 * 3600000).toISOString();
   return {day:date.slice(0,10),time:date.slice(11,19)};
 };
-export function historyMarkdown(history,{initialDay}={}) {
+export function historyMarkdown(history,{initialDay, ageAt}={}) {
   const people = new Map(), labels = [];
   const alias = (name,id) => {
     const key=id+'\0'+name;
@@ -40,7 +42,7 @@ export function historyMarkdown(history,{initialDay}={}) {
     return people.get(key);
   };
   const records=[];
-  const add=(role,content,at,kind='message')=>{
+  const add=(role,content,at,kind='message',important=false)=>{
     let speaker=role==='assistant'?'我':role==='system'?'摘录':'用户',body=content;
     const match=role==='user'&&String(content).match(/^([^\n]{1,80}?)[（(]([1-9]\d{4,14})[）)][:：]/);
     if(match){
@@ -50,7 +52,7 @@ export function historyMarkdown(history,{initialDay}={}) {
       let repeated;while((repeated=body.match(/^([^\n]{1,80}?)[（(]([1-9]\d{4,14})[）)][:：]/))&&repeated[2]===match[2])body=body.slice(repeated[0].length);
     }
     if(role==='user')body=body.replace(/^([^\n]{1,80}?)[（(]([1-9]\d{4,14})[）)][:：]/gm,(_all,name,id)=>alias(name,id)+':');
-    records.push({speaker,body,at:parts(at),kind});
+    records.push({speaker,body,at:ageAt===undefined?parts(at):memoryDateLabel(at,ageAt,important||notableMemory(body)),kind});
   };
   for(const item of history){
     if(item.historyKind==='sleep-summary'){
@@ -61,9 +63,9 @@ export function historyMarkdown(history,{initialDay}={}) {
       if(!matches.length){add('user',text,null,'旧记忆');continue;}
       if(matches[0].index) add('user',text.slice(0,matches[0].index),null,'旧记忆');
       for(let i=0;i<matches.length;i++){const m=matches[i],body=text.slice(m.index+m[0].length,matches[i+1]?.index??text.length);add(m[2]==='大肥鱼原话'?'assistant':'user',body,m[1],'旧记忆');}
-    }else add(item.role,item.content,item.recordedAt);
+    }else add(item.role,item.content,item.recordedAt,'message',item.important);
   }
   let day=initialDay,output=[];
-  for(const row of records){const next=row.at?.day||'日期未记录';if(next!==day){output.push(`## ${next}`);day=next;}const label=`${row.at?.time||'时间未记录'} ${row.kind==='旧记忆'?'旧记忆 · ':''}${row.speaker}`;output.push(/[\r\n`]/.test(row.body)?`### ${label}\n${block(row.body)}`:`- ${label}: ${row.body}`);}
+  for(const row of records){const next=row.at?.day||'日期未记录';if(next!==day){output.push(`## ${next}`);day=next;}const label=[row.at?.time??'时间未记录',row.kind==='旧记忆'?'旧记忆 ·':'',row.speaker].filter(Boolean).join(' ');output.push(/[\r\n`]/.test(row.body)?`### ${label}\n${block(row.body)}`:`- ${label}: ${row.body}`);}
   return (labels.length?'参与者\n'+labels.join('\n')+'\n我: 大肥鱼\n\n':'')+(output.join('\n')||'无历史');
 }

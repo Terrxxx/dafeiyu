@@ -123,19 +123,23 @@ async function start() {
     finally { for (const original of messages) incoming.delete(`qq-reply:${original.session}:${original.id}`); }
   }, reportError);
   const qq = new QQ(config, async event => {
-    if (stopping||dailyBudget.status().paused) return;
+    if (stopping) return;
+    const paused = dailyBudget.status().paused;
     if (event.post_type === 'request') {
-      if (friendRequests.receive(event)) log('好友申请已保存，清醒时根据好感度处理');
+      if (!paused && friendRequests.receive(event)) log('好友申请已保存，清醒时根据好感度处理');
       return;
     }
     let msg = parseMessage(event, qq.policy(), reason => log(`QQ 消息未触发：${reason}`));
     if (!msg || stopping) return;
-    if(msg.kind==='group'&&!tools.sleep.sleeping()){msg=await resolveGroupAddress(msg,qq);if(stopping)return;}
     msg = filterUserMessage(store, msg); if (!msg) return;
-    tools.feelings.receive(msg);
     const key = `qq-reply:${msg.session}:${msg.id}`;
     if (incoming.has(key) || store.data.actions[key]) { log('QQ 重复消息已忽略'); return; }
     recordUserActivity(store, msg);
+    delete msg.memoryText;
+    tools.feelings.receive(msg);
+    if (paused) return;
+    if(msg.kind==='group'&&!tools.sleep.sleeping()){msg=await resolveGroupAddress(msg,qq);if(stopping)return;}
+    if (incoming.has(key) || store.data.actions[key]) return;
     if (tools.sleep.sleeping()) {
       rememberSleepUnread(store, msg, config.agent.historyMessages);
       messageStage(store,msg,'sleeping');

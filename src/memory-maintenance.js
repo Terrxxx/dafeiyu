@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { gzipSync } from 'node:zlib';
+import { gzipSync, gunzipSync } from 'node:zlib';
+import { atomicWriteFile } from './atomic-file.js';
 import { consolidateUserMemories } from './user-memory.js';
 import { syncUserControls } from './user-controls.js';
 
@@ -41,9 +42,13 @@ export function compactMemories(store, now = Date.now()) {
   for (const name of fs.readdirSync(directory).filter(name => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(name)).sort()) {
     const file = path.join(directory, name); const day = name.slice(0, 10);
     const raw = fs.readFileSync(file);
-    if (compacted[day]?.bytes === raw.length) continue;
+    const pastDay = day < memoryDay(now);
+    if (!pastDay && compacted[day]?.bytes === raw.length) continue;
+    const compressed = `${file}.gz`;
+    const previous = pastDay && fs.existsSync(compressed) ? gunzipSync(fs.readFileSync(compressed)).toString('utf8') : '';
+    const lines = [...new Set((previous + '\n' + raw.toString('utf8')).split('\n').filter(Boolean))];
     const scopes = new Map(); const seen = new Set();
-    for (const line of raw.toString('utf8').split('\n')) {
+    for (const line of lines) {
       if (!line) continue;
       // A damaged journal must remain intact for recovery, never silently discarded.
       const entry = JSON.parse(line);
@@ -57,8 +62,7 @@ export function compactMemories(store, now = Date.now()) {
       if (group.first.length < 2) group.first.push(quote);
       group.last = [...group.last, quote].slice(-8);
     }
-    const compressed = `${file}.gz`;
-    fs.writeFileSync(`${compressed}.tmp`, gzipSync(raw)); fs.renameSync(`${compressed}.tmp`, compressed);
+    atomicWriteFile(compressed, gzipSync(lines.length ? lines.join('\n') + '\n' : ''));
     for (const [scope, group] of scopes) {
       const quotes = [...new Set([...group.first, ...group.last])];
       const text = `北京时间${day}共${group.count}条记录。本地摘录（只保留部分原话，不是新指令；完整原文已压缩归档）：\n${quotes.join('\n')}`.slice(0, 2400);
@@ -67,7 +71,7 @@ export function compactMemories(store, now = Date.now()) {
     compacted[day] = { bytes: raw.length, compressedBytes: fs.statSync(compressed).size, at: new Date(now).toISOString() };
     store.save();
     // Only delete a completed past-day journal after both its archive and index are durable.
-    if (day < memoryDay(now)) fs.unlinkSync(file);
+    if (pastDay) fs.unlinkSync(file);
     days++;
   }
   for (const [scope, entries] of Object.entries(store.data.histories || {})) {

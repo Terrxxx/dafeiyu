@@ -46,11 +46,12 @@ test('真实Harness出站请求的历史和工具资料确为Markdown（本地�
   t.after(async()=>{await runtime.close();fs.rmSync(directory,{recursive:true,force:true});});
   const agent=new HarnessAgent(config,store,tools,runtime);
   const rows=[{role:'user',content:'测试用户（123456）：你好'},{role:'assistant',content:'[图片 abc123]'}];
-  rows.forEach((r,i)=>Object.defineProperty(r,'recordedAt',{value:`2026-10-28T11:01:0${i}.123Z`}));
-  agent.context=()=>rows;agent.timeContext=()=> '当前时间（UTC）：2026-10-28T11:02:00Z。';
+  const day = new Date().toISOString().slice(0,10);
+  rows.forEach((r,i)=>Object.defineProperty(r,'recordedAt',{value:`${day}T11:01:0${i}.123Z`}));
+  agent.context=()=>rows;agent.timeContext=()=> `当前时间（UTC）：${day}T11:02:00Z。`;
   assert.equal(await agent.run('qq:user:123456','这张图好可爱',false,{remember:false}),'好呀');
   const content=captured.messages.filter(m=>m.role==='user').map(m=>m.content).join('\n');
-  for(const part of ['参与者','A: 测试用户(123456)','## 2026-10-28','19:01:00 A: 你好','[图片 abc123]'])assert.ok(content.includes(part),part);
+  for(const part of ['参与者','A: 测试用户(123456)',`## ${day}`,'19:01:00 A: 你好','[图片 abc123]'])assert.ok(content.includes(part),part);
   assert.ok(!content.includes('.123Z'));assert.ok(!content.includes('"role":"user"'));
   if(process.env.DFY_WIRE_EXAMPLE)fs.writeFileSync(process.env.DFY_WIRE_EXAMPLE,JSON.stringify(captured,null,2),{mode:0o600});
 });
