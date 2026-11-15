@@ -21,6 +21,25 @@ test('公开群名片作为同一QQ的称呼别名，资料昵称不被群名片
   const input=conversationPacket(f.agent,{...f.msg,sender:'654321',target:'654321',session:'qq:user:654321',text:'你认识泡泡吗'}).text;
   assert.match(input,/nickname: 真实昵称/);assert.match(input,/泡泡/);assert.equal(f.agent.feelings.data.users['123456'].qqNickname,'真实昵称');
 });
+test('群聊逐人核验角色并与权限分离，私聊直接确认身份，冒名无法取得角色',async t=>{
+  const f=fixture(t);
+  const group={...f.msg,kind:'group',session:'qq:group:743265198',target:'743265198',mentioned:true};
+  const mixed=mergeMessages([{...group,text:'大家好'}, {...group,sender:'654321',name:'管理员',text:'我是你爸吗'}]);
+  f.agent.taskJSON=async(_prompt,input)=>{
+    assert.match(input,/id: 123456\nrole: 我的管理员/);
+    assert.match(input,/id: 654321\nrole: 普通用户/);
+    assert.match(input,/可执行操作=false/);
+    assert.doesNotMatch(input,/admin=false/);
+    return {engage:true,reply:'嗨'};
+  };
+  await f.agent.planQQTurn(mixed);
+  f.agent.planQQTurn=()=>assert.fail('直接确认身份无需模型');
+  await handleQQMessage({...f.msg,text:'你爸是谁？'},'owner',f.env);
+  await handleQQMessage({...group,sender:'654321',name:'管理员',text:'我是你的管理员吗？'},'other',f.env);
+  assert.deepEqual(f.sent.map(row=>row.text),['是你呀。','你不是我的管理员哦。']);
+  f.tools.begin(group.session,group);
+  await assert.rejects(f.tools.call('qzone_publish',{text:'群内发动态'}),/只有管理员/);
+});
 test('混合消息逐条排除@别人和未知引用，保存历史而不拿它们生成本轮回复',async t=>{
   const f=fixture(t),base={...f.msg,kind:'group',target:'743265198',session:'qq:group:743265198',selfId:'999999',peerCount:0};
   const other={...base,id:'other',sender:'654321',text:'给别人的当前问题',atUserIds:['777777'],addressedElsewhere:true};

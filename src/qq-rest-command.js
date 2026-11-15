@@ -1,6 +1,6 @@
 import { validNapMinutes } from './sleep.js';
 import { assertMemoryEpoch } from './user-controls.js';
-import { incomingAllowed } from './qq-policy.js';
+import { canOperateQQ, incomingAllowed } from './qq-policy.js';
 
 const digit = { 零: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
 function duration(value, unit) {
@@ -14,11 +14,8 @@ function duration(value, unit) {
 }
 
 export function adminRestCommand(msg, policy) {
-  const id = String(msg.sender);
-  if (msg.kind !== 'private' || msg.unreadReview || String(msg.target) !== id ||
-      !(policy.adminUsers || []).includes(id)) return null;
+  if (!canOperateQQ(msg, policy)) return null;
   const sources = msg.sources || [msg];
-  if (sources.some(source => String(source.sender) !== id)) return null;
   const text = sources.map(source => String(source.text || '').trim())
     .filter(value => value && !/^晚安[呀啦哦。！!~～]*$/.test(value)).at(-1);
   if (!text) return null;

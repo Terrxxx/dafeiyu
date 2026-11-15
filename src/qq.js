@@ -50,6 +50,8 @@ export class QQ {
       if (stamp !== this.policyStamp) {
         const saved = JSON.parse(fs.readFileSync(this.policyFile, 'utf8').replace(/^\uFEFF/, ''));
         this.policyCache = normalizeQQPolicy({ ...initial,
+          adminUsers: Array.isArray(saved.qq?.adminUsers) && saved.qq.adminUsers.every(id => typeof id === 'string' && /^[1-9]\d*$/.test(id))
+            ? saved.qq.adminUsers : initial.adminUsers,
           groupBlocklist: saved.qq?.groupBlocklist ?? initial.groupBlocklist,
           privateBlocklist: saved.qq?.privateBlocklist ?? initial.privateBlocklist,
           adminOnlyDialogue: saved.qq?.adminOnlyDialogue ?? initial.adminOnlyDialogue });

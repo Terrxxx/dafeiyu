@@ -4,7 +4,7 @@ import {assertFreshQuestion,recordProactiveQuestion} from './proactive-dialogue.
 import{biliFlags,toolContextAllowed}from'./tool-availability.js';
 import{chatToolAllowed}from'./tool-routing.js';
 import {checkBalance} from './api-balance.js';
-import { assertQQTool } from './qq-policy.js';
+import { assertQQTool, isQQAdmin, isPrivateSender } from './qq-policy.js';
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { messageParts } from './message-parts.js';
@@ -85,11 +85,13 @@ export class SocialTools {
   privateAuthority() {
     const id = this.current?.kind === 'private' ? String(this.current.sender) : this.scope.match(/^qq:user:([1-9]\d*)$/)?.[1];
     if (!id) return null;
-    const sources = this.current?.sources || (this.current ? [this.current] : []);
-    const admin = (this.config.qq?.adminUsers || []).includes(id) && sources.every(source => String(source.sender) === id);
-    return { id, restricted: !admin, live: this.current?.kind === 'private' && String(this.current.target) === id && sources.every(source => String(source.sender) === id) };
+    const policy = this.qq.policy?.() || this.config.qq;
+    const live = isPrivateSender(this.current);
+    const admin = isQQAdmin(policy, id) && (!this.current || live && !this.current.unreadReview);
+    return { id, restricted: !admin, live };
   }
   privateToolAllowed(name, args = null) {
+    if (this.current && ['qzone_publish', 'bili_publish_dynamic'].includes(name) && this.current.kind !== 'private') return false;
     const authority = this.privateAuthority(); if (!authority?.restricted) return true;
     if (['qq_list_images', 'qq_read_image', 'qq_list_stickers', 'qq_inspect_sticker', 'qq_search_user_memory'].includes(name)) return true;
     if (!authority.live || !['qq_reply_current', 'qq_send_message', 'qq_send_image', 'qq_send_sticker', 'qq_send_voice'].includes(name)) return false;
@@ -147,7 +149,7 @@ export class SocialTools {
     if (this.sleep?.windDown?.()?.active && !this.current && ['qq_send_message', 'qq_send_voice', 'qq_send_image', 'qq_send_sticker'].includes(name)) throw new Error('正在睡前收尾，暂不新开主动聊天');
     if(!this.components.allowed(name))throw Error('站点或用户已关闭此组件');
     if(name==='self_api_balance'){
-      if(this.current&&(this.current.kind!=='private'||!this.config.qq.adminUsers.includes(String(this.current.sender))))throw Error('余额只可自主查询或管理员私聊查询');
+      if(this.current&&(!this.privateAuthority()?.live||this.privateAuthority().restricted))throw Error('余额只可自主查询或管理员私聊查询');
       if(this.config.provider==='custom')return {supported:false,message:'自定义供应商的余额请到供应商后台查看'};
       if(this.balanceCache&&Date.now()-this.balanceCache.checkedAt<60000)return this.balanceCache;
       this.store.reserve('balance-read',60);this.balanceCache=await checkBalance(this.config.apiKey);return this.balanceCache;

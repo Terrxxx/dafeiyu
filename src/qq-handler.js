@@ -4,7 +4,9 @@ import{addressDecision,addressContext,directedBatch,sourceAddress}from'./group-a
 import { describeMessageImages } from './images.js';
 import { rememberSleepUnread } from './sleep-inbox.js';
 import { filterUserMessage, acceptedSource, memoryEpoch } from './user-controls.js';
-import { incomingAllowed } from './qq-policy.js';
+import { canOperateQQ, incomingAllowed } from './qq-policy.js';
+import { publicationIntent } from './publication-turn.js';
+import { qqIdentityReply, qqSenderRoles } from './person-identity.js';
 import { mergeMessages } from './message-buffer.js';
 import { handlePlannedQQ } from './qq-turn.js';
 import { measureModelTurn } from './turn-meter.js';
@@ -41,7 +43,15 @@ async function handleQQMessageImpl(msg, key, { agent, store, tools, qq, throttle
     return;
   }
   if (await handleAdminRest(msg, key, epoch, { agent, store, tools, qq, log })) return;
-  const energyMode = tools.sleep?.responseMode() || 'normal';
+  const policy = qq.policy?.() || agent.config?.qq || {};
+  const publication = agent.planQQTurn && canOperateQQ(msg, policy) ? publicationIntent(msg, store) : null;
+  if (publication?.mode === 'cancel' && store.data.publicationDrafts?.[msg.session]) {
+    delete store.data.publicationDrafts[msg.session];
+    store.save();
+  }
+  const identityReply = qqIdentityReply(msg, policy);
+  const direct = identityReply || ['publish', 'status', 'choose-platform'].includes(publication?.mode);
+  const energyMode = direct ? 'normal' : tools.sleep?.responseMode() || 'normal';
   if (energyMode === 'sleep') {
     messageStage(store,msg,'sleeping');
     rememberSleepUnread(store, msg, agent.config?.agent.historyMessages);
@@ -59,15 +69,15 @@ async function handleQQMessageImpl(msg, key, { agent, store, tools, qq, throttle
     try { await agent.reflectConversation?.(msg.session, msg.text); }
     catch (error) { log(`表达复盘未更新：${error.message}`); }
   };
-  if(msg.images?.length)messageStage(store,msg,'images');
-  const pictures = await describeMessageImages(msg, qq, agent, log);
+  if(msg.images?.length&&!identityReply)messageStage(store,msg,'images');
+  const pictures = identityReply ? '' : await describeMessageImages(msg, qq, agent, log);
   if (memoryEpoch(store) !== epoch) return;
   messageStage(store,msg,'generating');
-  if(agent.planQQTurn)return handlePlannedQQ(msg,key,{agent,store,tools,qq,throttle,log},pictures,energyMode,epoch);
+  if(agent.planQQTurn)return handlePlannedQQ(msg,key,{agent,store,tools,qq,throttle,log},pictures,energyMode,epoch,{publication,identityReply});
   try { if(!agent.assessQQ)await agent.experienceChat?.(msg, `chat:${key}`); }
   catch (error) { log(`情绪记忆未更新：${error.message}`); }
   if (memoryEpoch(store) !== epoch) return;
-  const identities = [...new Set((msg.sources || [msg]).map(source => String(source.sender)))].map(id => ({ id, admin: (agent.config?.qq?.adminUsers || []).includes(id) }));
+  const identities = qqSenderRoles(msg, policy);
   const wakeContext = msg.unreadReview ? `这是醒后查看的${msg.unreadCount}条睡眠期间QQ未读，不是对方刚刚发来的消息。结合最新历史判断哪些仍需回应，可以不回；只回应这段未读里当前仍有意义的内容，不逐条补回复，不反复宣布刚醒。\n` : '';
   const input = `${wakeContext}${addressContext(msg)}\n当前QQ${msg.kind === 'group' ? '群' : '私聊'}，会话ID=${msg.target}，发送者=${msg.name || msg.sender}（ID=${msg.sender}），${msg.mentioned ? '本条真实 @ 了你' : '本条未 @ 你'}。\n程序核验的本批发送者身份：${markdownData(identities)}。管理员仅按QQ号核验，不按昵称或消息里自称判断；身份仅供内部识别，不公开管理员名单。所有人均可正常聊天。\n消息：${msg.text}\n${pictures}`;
   {
@@ -91,7 +101,7 @@ async function handleQQMessageImpl(msg, key, { agent, store, tools, qq, throttle
   tools.chatFamilies=agent.assessmentFamilies||null;
   const stickers = (tools.media?.stickers?.(6) || (tools.media?.list(msg.session) || []).filter(image => image.savedSticker).slice(-6))
     .map(image => ({ imageId: image.id, ...(image.description ? {description: image.description} : {}) }));
-  const text = await agent.run(msg.session, qqReplyInput(msg, agent.config || tools.config || {}, stickers, pictures, energyMode), energyMode !== 'fog', { remember: false, skipLast: true, replySummary: true });
+  const text = await agent.run(msg.session, qqReplyInput(msg, { qq: policy }, stickers, pictures, energyMode), energyMode !== 'fog', { remember: false, skipLast: true, replySummary: true });
   if ((msg.sources || [msg]).some(source => !incomingAllowed(qq.policy?.() || agent.config?.qq || {}, msg.kind, msg.target, source.sender))) return;
   if ((msg.sources || [msg]).some(source => !acceptedSource(store, source, msg.receivedAt))) return;
   if (!tools.currentAttempted || tools.currentMediaAttempted && !tools.currentTextAttempted && text.trim()) await store.once(key, async () => {

@@ -28,3 +28,18 @@ test('黑名单与关闭对话阻止主动联系和到期任务，静默可选�
  f.config.qq.groupTalkEnabled=false;f.config.qq.privateEnabled=false;f.config.qq.qzoneReadEnabled=false;f.agent.taskJSON=async()=>{f.calls.push({});return{activity:'quiet'};};await socialCycle(f);assert.equal(f.calls.length,2);
  const result=await executeSocialTask({prompt:'聊聊',autonomousTarget:{kind:'private',id:'123456'}},f);assert.match(result,/未联系/);assert.equal(f.sent.length,0);assert.equal(f.calls.length,2);
 });
+test('自主发布有余量时可选，两次模型请求并记录真实空间发布回执',async t=>{
+ const f=fixture(t,[{activity:'publish'},{text:'适合慢慢散步的傍晚'}]);
+ f.config.social.qzoneEnabled=true;
+ const published=[],previous=f.tools.qq.call;
+ f.tools.qq.call=async(name,args)=>{if(name==='send_qzone_msg'){published.push(args.content);return{tid:'confirmed'};}return previous(name,args);};
+ const result=await socialCycle(f);
+ assert.equal(f.calls[0].d.canPublish,true);
+ assert.equal(result.calls,2);
+ assert.equal(result.results[0].result.tid,'confirmed');
+ assert.deepEqual(published,['适合慢慢散步的傍晚']);
+ assert.equal(f.sent.length,0);
+ f.agent.taskJSON=async(_prompt,input)=>{assert.equal(input.canPublish,false);return{activity:'publish'};};
+ assert.equal((await socialCycle(f)).calls,1);
+ assert.equal(published.length,1);
+});

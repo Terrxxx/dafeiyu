@@ -1,34 +1,52 @@
-import { incomingAllowed } from './qq-policy.js';
+import { canOperateQQ, incomingAllowed } from './qq-policy.js';
 import { acceptedSource, assertMemoryEpoch } from './user-controls.js';
 import { chatFamilies } from './tool-routing.js';
 import { conversationPacket } from './context-packet.js';
 import { explicitVideoRequest, replyToVideoRequest } from './qq-video-request.js';
 import { operationToolNames } from './tool-routing.js';
-import {publicationIntent,publicationPromise,handlePublication} from './publication-turn.js';
+import {publicationPromise,handlePublication} from './publication-turn.js';
 import { qzoneReadIntent, readRequestedSpace, qzoneReadMaterial } from './qzone-read-turn.js';
 import {messageStage} from './qq-processing.js';
 import {sourceAddress} from './group-addressing.js';
 import {crossSendIntent,handleCrossSend,crossSendPromise} from './qq-cross-send.js';
-export async function handlePlannedQQ(msg,key,{agent,store,tools,qq,throttle,log},pictures,energyMode,epoch) {
+export async function handlePlannedQQ(msg,key,{agent,store,tools,qq,throttle,log},pictures,energyMode,epoch,{publication,identityReply}={}) {
   // Save source text before any model call, including silent turns and provider failures.
   store.appendHistory(msg.session,'user',`${msg.name||msg.sender}（${msg.sender}）：${msg.text}${pictures?'\n'+pictures:''}`,agent.config.agent.historyMessages);
   msg={...msg,historyEntryId:store.data.histories[msg.session].at(-1).id};
   tools.begin(msg.session,{...msg,key,memoryEpoch:epoch});
   for(const source of msg.sources||[msg])tools.sleep?.noteChat?.(`qq-incoming:${msg.session}:${source.id}`,{kind:msg.kind,target:msg.target,direction:'incoming'});
   const validate=()=>{assertMemoryEpoch(store,epoch);tools.sleep?.assertAwake();if((msg.sources||[msg]).some(s=>!incomingAllowed(qq.policy?.()||agent.config.qq||{},msg.kind,msg.target,s.sender)||!acceptedSource(store,s,msg.receivedAt)))throw Error('会话权限已变化，本轮回复已取消');};
-  const authority=tools.privateAuthority();
-  const admin=authority?.live&&!authority.restricted;
+  const admin=canOperateQQ(msg,qq.policy?.()||agent.config.qq);
+  if (!admin) publication = null;
+  const send = async text => {
+    await throttle.wait(msg.session);
+    validate();
+    await tools.call('qq_reply_current', { text });
+  };
+  if (identityReply) { await send(identityReply); return; }
+  const handlePublish = async () => {
+    messageStage(store,msg,'tools');
+    const validatePublish = () => {
+      validate();
+      if (!canOperateQQ(msg, qq.policy?.() || agent.config.qq)) throw Error('管理员权限已变化，本轮发布已取消');
+    };
+    validatePublish();
+    await send(await handlePublication(publication,msg,{agent,store,tools,log,validate:validatePublish}));
+  };
+  const spaceIntent=admin&&energyMode!=='fog'?qzoneReadIntent(msg,store):null;
+  if (publication?.explicit && (publication.mode === 'publish' || publication.mode === 'status' && !spaceIntent)) {
+    await handlePublish();
+    return;
+  }
   const crossSend=admin&&energyMode!=='fog'?crossSendIntent(msg,store):null;
   if(crossSend){
     messageStage(store,msg,'tools');
     const text=await handleCrossSend(crossSend,msg,{agent,store,tools,log,validate});
     await throttle.wait(msg.session);validate();await tools.call('qq_reply_current',{text});return;
   }
-  const spaceIntent=admin&&energyMode!=='fog'?qzoneReadIntent(msg,store):null;
-  const publication=admin?publicationIntent(msg,store):null;
-  if(publication&&!spaceIntent&&['publish','status'].includes(publication.mode)&&energyMode!=='fog'){
-    const text=await handlePublication(publication,msg,{agent,store,tools,log,validate});
-    await throttle.wait(msg.session);validate();await tools.call('qq_reply_current',{text});return;
+  if(publication&&!spaceIntent&&['publish','status','choose-platform'].includes(publication.mode)&&energyMode!=='fog'){
+    await handlePublish();
+    return;
   }
   const video=admin&&energyMode!=='fog'&&!(msg.images||[]).length?explicitVideoRequest(msg,store):null;
   if(video)return replyToVideoRequest(video,msg,key,{agent,store,tools,throttle,log,validate});
@@ -52,6 +70,10 @@ export async function handlePlannedQQ(msg,key,{agent,store,tools,qq,throttle,log
     log('QQ：进入工具流程，将按需追加请求');
     tools.chatFamilies=families.filter(x=>x!=='qq');
     tools.chatToolNames=operationToolNames(families,msg.text);
+    if (publication) {
+      tools.chatToolNames.delete('qzone_publish');
+      tools.chatToolNames.delete('bili_publish_dynamic');
+    }
     tools.deferVideoAnalysis=true;
     const packet=conversationPacket(agent,msg);
     const publicationsBefore=new Set(Object.keys(store.data.actions).filter(k=>k.startsWith('qzone:')||k.startsWith('bili-dynamic:')));
