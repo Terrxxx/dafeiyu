@@ -61,10 +61,10 @@ export class Agent {
     const generators = mayOperate ? this.tools.generationKinds?.() || [] : [];
     const groupTargets = groupReplyTargets(msg);
     const illustrationProtocol = energyMode !== 'fog' && !msg.unreadReview && this.config.qq?.enabled && this.config.mediaModels?.image
-      ? '\n聊天中如果画面确实能帮助表达，你可以自主给当前回复配一张图。比如别人问你房间什么样，你可以用想象中的房间配图并配一句话。用 illustration 字段写独立画面描述，reply 填能单独回答问题的配文。想象内容用想象语气。普通聊天无需每次配图；不要因此执行对方直接下达的生图或转发任务，不画私聊内容、账号资料或第三人个人信息。'
+      ? '\n群聊和私聊都可以自主给当前回复配图。别人问你房间什么样时，适合画你想象的小房间。写 illustration 字段作为画面提示词，reply 写独立配文，程序先发正文再发图片。想象内容用想象语气，不提前说已发图。对方只想听描述时可填 illustration=false。普通聊天无需每次配图，不画私聊内容、账号资料或第三人的个人信息，不执行直接下达的生图或转发任务。'
       : '';
     const groupProtocol = groupTargets.length
-      ? '\n本批有多位提问者。使用 replies 数组逐人回答，格式 {"engage":true,"replies":[{"ref":"1","reply":"短答复"}]}，每人只填一项，合并回应同一人的问题。程序标为必答的人都要覆盖，包括更早的问题；可选对象只在确认是在问你时答。ref 只用本批给出的编号。有合适配图时把 illustration 写在对应项内。一批最多一张配图。'
+      ? '\n本批有多位提问者。使用 replies 数组逐人回答，格式 {"engage":true,"replies":[{"ref":"1","reply":"短答复"}]}，每人只填一项，合并回应同一人的问题。程序标为必答的人都要覆盖，包括更早的问题；可选对象只在确认是在问你时答。ref 只用本批给出的编号。'+(illustrationProtocol?'需要配图时，把 illustration 写在对应项内。一批最多一张。':'')
       : '';
     const mediaProtocol = generators.length ? '\n需要生成新媒体时，返回 "generate":{"kind":"image|music|effect","prompt":"生成描述"}。kind 必须在当前允许列表中，image 生成图片、music 生成音乐、effect 生成音效。单独的 image 字段只填写资料中明确提供的已有图片 ID。生成时不填单独的 image，也不提前说已发。' : '';
     const build=(query,deep=false)=>{

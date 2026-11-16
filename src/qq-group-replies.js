@@ -1,6 +1,6 @@
 import { sourceAddress } from './group-addressing.js';
 import { qqIdentityReply } from './person-identity.js';
-import { tryQQIllustration } from './qq-features.js';
+import { qqIllustrationPrompt, sendQQIllustration } from './qq-features.js';
 import { confirmedMessage } from './qq-processing.js';
 
 const question = /[?？]|[吗嘛呢][。！!~～\s]*$|怎么|为什么|为啥|什么|哪[个里儿些种]|多少|几点|多久|能不能|可不可以|有没有|是不是|要不要|会不会/;
@@ -42,7 +42,7 @@ export async function replyToGroupBatch(targets, result, msg, {
   for (const item of targets) {
     if (!item.required) continue;
     const text = qqIdentityReply({ ...msg, ...item.source, sources: [item.source] }, policy);
-    if (text) replies.set(item.ref, { text });
+    if (text) replies.set(item.ref, { text, skipIllustration: true });
   }
   const relevant = targets.filter(item => item.required || result.engage === true);
   collectReplies(result.replies, relevant, replies);
@@ -61,7 +61,7 @@ export async function replyToGroupBatch(targets, result, msg, {
     }
     validate();
     for (const item of missing) {
-      if (!replies.has(item.ref)) replies.set(item.ref, { text: '我看到啦，这个我还没想好。' });
+      if (!replies.has(item.ref)) replies.set(item.ref, { text: '我看到啦，这个我还没想好。', skipIllustration: true });
     }
   }
   if (!replies.size) return false;
@@ -69,7 +69,7 @@ export async function replyToGroupBatch(targets, result, msg, {
   await throttle.wait(msg.session);
   const original = tools.current;
   let sent = 0;
-  let attemptedImage = false;
+  let illustration;
   try {
     for (const item of targets) {
       const reply = replies.get(item.ref);
@@ -81,19 +81,21 @@ export async function replyToGroupBatch(targets, result, msg, {
         ...msg, ...source, sources: [source], key: `qq-reply:${msg.session}:${source.id || item.ref}`, memoryEpoch: epoch,
       });
       try {
-        if (!attemptedImage && energyMode !== 'fog' && reply.illustration && mayIllustrate(source)) {
-          attemptedImage = true;
-          const imageStatus = await tryQQIllustration(tools, { prompt: reply.illustration, text: reply.text, quote, log });
-          if (imageStatus) {
-            if (imageStatus === 'sent') sent++;
-            continue;
-          }
-        }
         const receipt = await tools.call('qq_reply_current', { text: reply.text, quote, mentionSender: !quote });
-        if (confirmedMessage(receipt)) sent++;
+        if (!confirmedMessage(receipt)) continue;
+        sent++;
+        if (!illustration && tools.config.mediaModels?.image && energyMode !== 'fog' &&
+            !reply.skipIllustration && mayIllustrate(source)) {
+          const prompt = qqIllustrationPrompt(source.text || '', reply.illustration);
+          if (prompt) illustration = { current: tools.current, prompt, receipt };
+        }
       } catch (error) {
         log('QQ 群聊逐人回复未完成：' + error.message);
       }
+    }
+    if (illustration) {
+      tools.begin(msg.session, illustration.current);
+      await sendQQIllustration(tools, illustration.prompt, illustration.receipt, log);
     }
   } finally {
     tools.current = original;

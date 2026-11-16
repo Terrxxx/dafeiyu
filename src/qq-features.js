@@ -11,9 +11,7 @@ import { checklistMarkdown } from './checklist-markdown.js';
 import { imageSendResult, mediaReceipt } from './image-description.js';
 import { generateMedia } from './media-generation.js';
 import { canOperateQQ, incomingAllowed } from './qq-policy.js';
-import { chatText } from './reply-summary.js';
-import { messageStage } from './qq-processing.js';
-import { withoutRepeatedQuestions } from './proactive-dialogue.js';
+import { confirmedMessage, messageStage } from './qq-processing.js';
 
 const str = description => ({ type: 'string', description });
 const target = { kind: { type: 'string', enum: ['private', 'group'] }, target: str('当前会话或已核实的目标ID') };
@@ -52,7 +50,7 @@ async function sendQQMedia(tools, args, data, isCurrent) {
   const receipt = await tools.qq.call(group ? 'send_group_msg' : 'send_private_msg', {
     [group ? 'group_id' : 'user_id']: Number(args.target), message,
   });
-  if (receipt?.message_id === undefined) throw Error('媒体发送未收到消息ID，状态不明');
+  if (receipt?.message_id === undefined || !confirmedMessage(receipt)) throw Error('媒体发送未收到消息ID，状态不明');
   return receipt;
 }
 
@@ -126,38 +124,68 @@ async function generateForCurrent(tools, args, illustration = false) {
     const segments = [{
       type: image ? 'image' : 'record', data: { file: 'base64://' + fileData },
     }];
-    const caption = illustration ? args.caption : '';
-    if (caption) segments.unshift({ type: 'text', data: { text: caption } });
+    if (illustration) messageStage(tools.store, current, 'sending');
     const receipt = await sendQQMedia(tools, args, segments, true);
     if (asset) tools.media.markSent(asset.id);
     tools.mediaLog?.(`媒体生成 · ${name} · QQ 已确认发送 · ${details} · 消息 ID ${receipt.message_id}`);
     const summary = asset ? `[图片 ${asset.id}]` : kind === 'music' ? '[音乐语音]' : '[音效语音]';
-    tools.store.appendHistory(current.session, 'assistant', caption ? caption + '\n' + summary : summary, tools.config.agent.historyMessages);
+    tools.store.appendHistory(current.session, 'assistant', summary, tools.config.agent.historyMessages);
     return asset ? imageSendResult(asset.id, receipt) : receipt;
   });
 }
 
-export async function tryQQIllustration(tools, { prompt, text, quote, log }) {
+export function qqIllustrationPrompt(text, planned) {
+  if (planned === false || /(?:别|不要|不用|不必)(?:发图|发图片|生图|画|配图)|(?:光|只|仅)(?:说说|描述|用文字|发文字)/.test(text)) return '';
+  if (typeof planned === 'string' && planned.trim() && planned.length <= 1000) return planned.trim();
+  const ownRoomQuestion = /^(?:大肥鱼[，,、\s]*)?(?:想看看|想看|好奇)?你(?:的)?(?:小?房间|卧室|住的地方|小窝)\s*(?:是|长)?(?:个)?(?:什么样|啥样|怎么样)(?:子|的|呀|啊|呢|吗|嘛|[。？！?!～~\s])*$/;
+  if (!ownRoomQuestion.test(text.trim())) return '';
+  return '大肥鱼想象中的小房间，柔和的自然光，布置温馨，有柔软的被褥和小摆件。展示房间的整体布局和生活细节，画面中不用出现人物、文字或可识别的地点。';
+}
+
+export async function tryQQIllustration(tools, { prompt, text, quote, mentionSender, log }) {
   const current = tools.current;
   if (!tools.config.mediaModels?.image || !current || current.unreadReview || typeof prompt !== 'string' ||
       !prompt.trim() || prompt.length > 1000 || typeof text !== 'string' || !text.trim()) return false;
+
+  const args = { kind: current.kind, target: current.target, mediaKind: 'image', prompt };
   try {
-    const caption = withoutRepeatedQuestions(tools.store, current.session, chatText(text));
-    if (!caption.trim()) return false;
-    tools.sleep?.assertTemporalReply?.(caption, false);
-    messageStage(tools.store, current, 'sending');
-    const result = await generateForCurrent(tools, {
-      kind: current.kind, target: current.target, quote, mediaKind: 'image', prompt, caption,
-    }, true);
+    assertGeneratedSend(tools, 'image', args, true);
+  } catch (error) {
+    log('QQ 配图未开始：' + error.message);
+    return false;
+  }
+
+  let captionReceipt;
+  try {
+    captionReceipt = await tools.call('qq_reply_current', { text, quote, mentionSender });
+  } catch (error) {
+    log('QQ 配图正文未确认：' + error.message);
+    return true;
+  }
+  if (confirmedMessage(captionReceipt)) await sendQQIllustration(tools, prompt, captionReceipt, log);
+  return true;
+}
+
+export async function sendQQIllustration(tools, prompt, captionReceipt, log) {
+  const current = tools.current;
+  const args = { kind: current.kind, target: current.target, mediaKind: 'image', prompt };
+  tools.mediaLog?.('媒体生成 · 图片 · QQ 已确认发送配文 · 消息 ID ' +
+    (captionReceipt.message_id ?? captionReceipt.messages.map(item => item.message_id).join('、')));
+
+  try {
+    messageStage(tools.store, current, 'tools');
+    const result = await generateForCurrent(tools, args, true);
     const receipt = result?.[mediaReceipt];
-    if (!receipt) return ['sent', 'pending', 'uncertain'].includes(result?.state) ? result.state : false;
-    tools.store.recordSent(current.kind, current.target, receipt, caption + ` [图片 ${result.imageId}]`);
+    if (!receipt) {
+      messageStage(tools.store, current, result?.state === 'sent' ? 'replied' : 'partial');
+      return;
+    }
+    tools.store.recordSent(current.kind, current.target, receipt, '[图片 ' + result.imageId + ']');
     tools.sleep?.recordOutgoing?.(current.kind, current.target, receipt);
     messageStage(tools.store, current, 'replied');
-    return 'sent';
   } catch (error) {
-    log('QQ 配图未完成：' + error.message);
-    return tools.currentAttempted ? 'uncertain' : false;
+    log('QQ 配图未完成，正文已发送：' + error.message);
+    messageStage(tools.store, current, 'partial');
   }
 }
 

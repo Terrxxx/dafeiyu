@@ -10,7 +10,7 @@ import {messageStage} from './qq-processing.js';
 import {sourceAddress} from './group-addressing.js';
 import {crossSendIntent,handleCrossSend,crossSendPromise} from './qq-cross-send.js';
 import { groupReplyTargets, replyToGroupBatch } from './qq-group-replies.js';
-import { tryQQIllustration } from './qq-features.js';
+import { qqIllustrationPrompt, tryQQIllustration } from './qq-features.js';
 
 function explicitImagePrompt(text) {
   const prompt = String(text || '').trim();
@@ -133,8 +133,13 @@ export async function handlePlannedQQ(msg,key,{agent,store,tools,qq,throttle,log
   agent.reportDecision(msg.session,result.summary||((reply||image||voice)?'已生成当前会话表达':'选择安静'),'合并回复');
   if(!reply&&!image&&!voice){messageStage(store,msg,'silent');store.data.actions[key]={state:'silent',time:Date.now()};store.save();log('QQ：保持安静，原话已保存');return;}
   await throttle.wait(msg.session);validate();
-  if (energyMode !== 'fog' && reply && result.illustration && (msg.sources || [msg]).every(mayIllustrate) &&
-      await tryQQIllustration(tools, { prompt: result.illustration, text: reply, quote: result.quote === true, log })) return;
+  const sources = msg.sources || [msg];
+  if (energyMode !== 'fog' && reply && sources.every(mayIllustrate)) {
+    const prompt = qqIllustrationPrompt(sources.at(-1).text || '', result.illustration);
+    if (prompt && await tryQQIllustration(tools, {
+      prompt, text: reply, quote: result.quote === true, mentionSender: result.mention === true, log,
+    })) return;
+  }
   if(image){try{await tools.call('qq_send_image',{kind:msg.kind,target:String(msg.target),imageId:image,quote:result.quote===true});}catch(error){log('QQ 图片未发送：'+error.message);}}
   if(voice&&!reply){await tools.call('qq_send_voice',{kind:msg.kind,target:String(msg.target),text:voice,quote:result.quote===true});}
   else if(reply){await tools.call('qq_reply_current',{text:reply,quote:result.quote===true,mentionSender:result.mention===true});}
