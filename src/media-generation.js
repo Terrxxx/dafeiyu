@@ -64,7 +64,12 @@ function generationBody(kind, profile, prompt) {
     if (kind === 'music') return { model_id: model, prompt, music_length_ms: 12000 };
     return { model_id: model, text: prompt, duration_seconds: 5 };
   }
-  if (kind === 'speech') return { model, input: prompt, voice, response_format: 'wav' };
+  if (kind === 'speech') {
+    return {
+      model, input: prompt, voice, response_format: 'wav',
+      ...(profile.instructions ? { instructions: profile.instructions } : {}),
+    };
+  }
   return { model, prompt, duration_seconds: kind === 'music' ? 12 : 5 };
 }
 

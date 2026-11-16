@@ -1,5 +1,7 @@
 import { modelSettings, normalizeCustomUrl } from './model-provider.js';
 
+const maxSpeechInstructions = 4096;
+
 export const mediaKinds = ['image', 'speech', 'music', 'effect'];
 
 const defaults = {
@@ -23,6 +25,14 @@ export function normalizeMediaModel(kind, input, previous) {
   if (typeof route !== 'string' || (route && !/^\/(?:[\w-]+\/)*[\w-]+$/.test(route))) invalid('请输入有效的接口路径，例如 /audio/music');
   if (route.length > 150 || (!route && !defaults[protocol][kind])) invalid('音乐或音效的兼容网关需要填写接口路径');
   const value = { enabled: true, protocol, source, model, route, ...(kind === 'speech' ? { voice } : {}) };
+  if (kind === 'speech' && protocol === 'openai') {
+    const instructions = input.instructions === undefined ? previous?.instructions ?? '' : input.instructions;
+    if (typeof instructions !== 'string' || instructions.length > maxSpeechInstructions ||
+        /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(instructions)) {
+      invalid('语音风格提示词须为不超过 4096 字符的文本');
+    }
+    if (instructions.trim()) value.instructions = instructions.trim();
+  }
   if (source === 'custom') {
     value.baseUrl = normalizeCustomUrl(input.baseUrl);
     const sameProvider = previous?.source === 'custom' && previous.protocol === protocol &&
@@ -53,6 +63,7 @@ export function runtimeMediaModels(secrets) {
     return [[kind, {
       endpoint, protocol: profile.protocol, model: profile.model, voice: profile.voice,
       apiKey: profile.source === 'chat' ? secrets.apiKey : profile.apiKey,
+      ...(kind === 'speech' && profile.protocol === 'openai' && profile.instructions ? { instructions: profile.instructions } : {}),
     }]];
   }));
 }

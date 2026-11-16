@@ -58,6 +58,12 @@ function MediaModelForm({ kind, settings, notify, reload }) {
           {needsRoute && <Field label="生成接口路径" name="route" required maxLength={150}
             defaultValue={settings.route} placeholder={kind === "music" ? "/audio/music" : "/audio/sound-effects"} />}
         </div>
+        {kind === "speech" && protocol === "openai" && <label className="field">
+          <span>语音风格提示词</span>
+          <textarea name="instructions" rows={3} maxLength={4096} defaultValue={settings.instructions || ""}
+            placeholder="例如：清亮、软萌的普通话女声，像给朋友发语音" />
+          <small>需要供应商和模型支持语音风格指令。留空使用音色的默认风格。</small>
+        </label>}
         {kind !== "image" && <p className="muted">音频通过 QQ 语音发送，需开启「允许发送语音」及语音组件。</p>}
       </>}
       <button type="submit">保存媒体模型</button>

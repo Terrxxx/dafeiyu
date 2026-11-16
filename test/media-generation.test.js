@@ -48,7 +48,8 @@ test('planned QQ generation uses image and native record segments, and only admi
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dfy-media-generation-'));
   const store = new Store(dir);
   const config = {
-    mediaModels: profiles, qq: { enabled: true, adminUsers: ['123456'], voiceEnabled: true },
+    mediaModels: { ...profiles, speech: { ...profiles.speech, instructions: '用清亮的普通话和朋友打招呼' } },
+    qq: { enabled: true, adminUsers: ['123456'], voiceEnabled: true },
     agent: { historyMessages: 64, maxModelCallsPerHour: 0, maxOutgoingPerHour: 20 }, social: {},
   };
   const sent = [], requests = [];
@@ -83,7 +84,10 @@ test('planned QQ generation uses image and native record segments, and only admi
   assert.equal(requests[2].headers['xi-api-key'], 'audio-test-key');
   assert.deepEqual(requests[2].body, { model_id: 'music_v2', prompt: '合成样例', music_length_ms: 12000 });
   assert.deepEqual(requests[3].body, { model_id: 'sound-model', text: '合成样例', duration_seconds: 5 });
-  assert.equal(requests[4].body.response_format, 'wav');
+  assert.deepEqual(requests[4].body, {
+    model: 'speech-model', input: '这是一段语音', voice: 'alloy', response_format: 'wav',
+    instructions: '用清亮的普通话和朋友打招呼',
+  });
   const other = { ...received, id: 'other', key: 'other', sender: '234567', target: '234567', session: 'qq:user:234567' };
   tools.begin(other.session, other);
   assert.ok(!tools.schemas.some(schema => schema.function.name === 'qq_generate_media'));

@@ -134,7 +134,16 @@ test('manager keeps DeepSeek as default, saves custom settings and never checks 
   assert.equal((await call('/account/media-model', { ...effect, baseUrl: 'https://127.0.0.1' })).status, 400);
   assert.equal((await call('/account/media-model', effect)).status, 200);
   assert.equal((await call('/account/media-model', { ...effect, baseUrl: 'https://other.example.com', apiKey: '' })).status, 400);
+  const speech = { kind: 'speech', enabled: true, source: 'chat', protocol: 'openai',
+    model: 'gpt-4o-mini-tts', voice: 'coral' };
+  const instructions = '清亮、软萌的普通话女声，像给朋友发语音';
+  assert.equal((await call('/account/media-model', { ...speech, instructions: 123 })).status, 400);
+  assert.equal((await call('/account/media-model', { ...speech, instructions: '字'.repeat(4097) })).status, 400);
+  assert.equal((await call('/account/media-model', { ...speech, instructions: '\0' })).status, 400);
+  assert.equal((await call('/account/media-model', { ...speech, instructions: ' ' + instructions + ' ' })).status, 200);
+  assert.equal((await call('/account/media-model', speech)).status, 200);
   const withMedia = (await status()).value.bot.mediaModels;
+  assert.equal(withMedia.speech.instructions, instructions);
   assert.equal(withMedia.effect.keySet, true);
   assert.doesNotMatch(JSON.stringify(withMedia), /media-key-test|custom-key-test/);
   assert.equal((await call('/account/control', { action: 'start' })).status, 200);
@@ -144,6 +153,8 @@ test('manager keeps DeepSeek as default, saves custom settings and never checks 
   assert.equal(configured.image.apiKey, 'custom-key-test');
   assert.equal(configured.effect.endpoint, 'https://audio.example.com/v1/sound-generation');
   assert.equal(configured.effect.apiKey, 'media-key-test');
+  assert.equal(configured.speech.instructions, instructions);
+  assert.equal(configured.speech.endpoint, 'https://api.example.com/v1/audio/speech');
   assert.equal(env.DAFEIYU_MODEL_PROVIDER, 'custom');
   assert.equal(env.DEEPSEEK_MODEL, 'provider/third');
   assert.equal(env.DEEPSEEK_BASE_URL, custom.bot.baseUrl);
@@ -157,9 +168,12 @@ test('manager keeps DeepSeek as default, saves custom settings and never checks 
   assert.deepEqual(restored.daily.limits, config.limits);
   assert.equal((await call('/account/media-model', { kind: 'effect', enabled: false })).status, 200);
   assert.equal((await status()).value.bot.mediaModels.effect.enabled, false);
+  assert.equal((await call('/account/media-model', { ...speech, instructions: '' })).status, 200);
+  assert.equal((await status()).value.bot.mediaModels.speech.instructions, undefined);
   assert.equal((await call('/account/control', { action: 'start' })).status, 200);
   const deepseek = runtimeCalls.findLast(row => row.operation === 'start').options.env;
   assert.equal(JSON.parse(deepseek.DAFEIYU_MEDIA_MODELS).effect, undefined);
+  assert.equal(JSON.parse(deepseek.DAFEIYU_MEDIA_MODELS).speech.instructions, undefined);
   assert.equal(deepseek.DEEPSEEK_BASE_URL, 'https://api.deepseek.com');
   assert.equal(deepseek.DEEPSEEK_MODEL, 'deepseek-flash');
   assert.ok(checkedKeys.every(key => !key.includes('custom-key-test')));
