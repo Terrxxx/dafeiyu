@@ -52,10 +52,11 @@ test('planned QQ generation uses image and native record segments, and only admi
     qq: { enabled: true, adminUsers: ['123456'], voiceEnabled: true },
     agent: { historyMessages: 64, maxModelCallsPerHour: 0, maxOutgoingPerHour: 20 }, social: {},
   };
-  const sent = [], requests = [];
+  const sent = [], requests = [], logs = [];
   const qq = { async call(name, args) { sent.push({ name, args }); return { message_id: sent.length }; } };
   const tools = new SocialTools(config, store, qq, {});
   t.after(() => { tools.components.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+  tools.mediaLog = line => logs.push(line);
   tools.mediaRequest = async (url, options) => {
     requests.push({ url, headers: options.headers, body: JSON.parse(options.body) });
     if (url === profiles.image.endpoint) return Response.json({ data: [{ b64_json: image.toString('base64') }] });
@@ -93,6 +94,19 @@ test('planned QQ generation uses image and native record segments, and only admi
   assert.ok(!tools.schemas.some(schema => schema.function.name === 'qq_generate_media'));
   await assert.rejects(tools.call('qq_generate_media', { mediaKind: 'music', prompt: '禁止越权' }), /只有管理员/);
   assert.equal(requests.length, 5);
+  assert.match(logs.join('\n'), /语音 · 发出请求 · 模型 speech-model · 音色 alloy/);
+  assert.ok(logs.includes('媒体生成 · 语音 · 合成文本：这是一段语音'));
+  assert.ok(logs.includes('媒体生成 · 语音 · 风格提示词：用清亮的普通话和朋友打招呼'));
+  assert.match(logs.join('\n'), /语音 · 完成 · \d+\.\d+ 秒 · audio\/wav · 46 字节/);
+  assert.ok(logs.includes('媒体生成 · 语音 · 向 QQ 提交原生语音'));
+  assert.ok(logs.includes('媒体生成 · 语音 · QQ 已确认发送 · 消息 ID 5'));
+
+  config.mediaModels.speech.instructions = '补充\nBearer shared-test-key';
+  qq.call = async () => { throw Error('OneBot 动作失败 (1200)'); };
+  await assert.rejects(handleQQMessage({ ...received, text: '再说一遍', id: 'voice-send-error' }, 'voice-send-error', env), /OneBot/);
+  assert.ok(logs.includes('媒体生成 · 语音 · QQ 未确认发送 · OneBot 动作失败 (1200)'));
+  assert.match(logs.join('\n'), /风格提示词：补充 Bearer \[已隐藏\]/);
+  assert.doesNotMatch(logs.join('\n'), /shared-test-key/);
 });
 
 test('private and group illustrations send a confirmed caption before requesting and sending the image', async t => {

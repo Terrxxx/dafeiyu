@@ -92,8 +92,13 @@ async function requestGeneratedMedia(tools, kind, text, args, illustration = fal
   const profile = tools.config.mediaModels[kind];
   const name = generationNames[kind];
   const started = Date.now();
-  tools.mediaLog?.(`媒体生成 · ${name} · 发出请求 · 模型 ${mediaLogText(tools, profile.model)}`);
-  tools.mediaLog?.(`媒体生成 · ${name} · 提示词：${mediaLogText(tools, String(text).trim().slice(0, 1000))}`);
+  const isSpeech = kind === 'speech';
+  const voice = isSpeech && profile.voice ? ' · 音色 ' + mediaLogText(tools, profile.voice) : '';
+  tools.mediaLog?.(`媒体生成 · ${name} · 发出请求 · 模型 ${mediaLogText(tools, profile.model)}${voice}`);
+  tools.mediaLog?.(`媒体生成 · ${name} · ${isSpeech ? '合成文本' : '提示词'}：${mediaLogText(tools, String(text).trim()).slice(0, 1000)}`);
+  if (isSpeech && profile.protocol === 'openai' && profile.instructions) {
+    tools.mediaLog?.('媒体生成 · 语音 · 风格提示词：' + mediaLogText(tools, profile.instructions).slice(0, 1000));
+  }
   try {
     const media = await generateMedia(kind, profile, text, tools.mediaRequest);
     assertGeneratedSend(tools, kind, args, illustration);
@@ -338,6 +343,7 @@ export async function executeQQFeature(tools, name, args) {
     });
   }
   if (['qq_send_image', 'qq_send_voice'].includes(name)) {
+    const isVoice = name === 'qq_send_voice';
     if (!['private', 'group'].includes(args.kind) || !tools.targets.has(`${args.kind}:${args.target}`)) throw new Error('请先核实发送目标');
     const isCurrent = tools.current && args.kind === tools.current.kind && String(args.target) === tools.current.target;
     if (isCurrent && (name === 'qq_send_image' ? tools.currentImageAttempted : tools.currentAttempted)) return { skipped: true, reason: '本轮已经回复' };
@@ -354,7 +360,7 @@ export async function executeQQFeature(tools, name, args) {
     const key = isCurrent ? (name === 'qq_send_image' ? `${tools.current.key}:image:${args.imageId}` : tools.current.key) : `qq-media:${args.kind}:${args.target}:${digest(summary)}:${Math.floor(Date.now() / 3600000)}`;
     return tools.store.once(key, async () => {
       tools.outgoing();
-      if (name === 'qq_send_voice') {
+      if (isVoice) {
         let generated;
         if (tools.config.mediaModels?.speech) {
           generated = await requestGeneratedMedia(tools, 'speech', args.text, args);
@@ -362,7 +368,7 @@ export async function executeQQFeature(tools, name, args) {
           const started = Date.now();
           const voice = tools.config.social?.voiceName;
           tools.mediaLog?.(`媒体生成 · 语音 · 开始本地合成 · 音色 ${mediaLogText(tools, voice || '默认')}`);
-          tools.mediaLog?.(`媒体生成 · 语音 · 提示词：${mediaLogText(tools, args.text)}`);
+          tools.mediaLog?.(`媒体生成 · 语音 · 合成文本：${mediaLogText(tools, args.text)}`);
           try {
             const bytes = await (tools.synthesizeSpeech || synthesizeSpeech)(args.text, tools.media.directory, voice);
             generated = { bytes, mime: 'audio/wav', elapsed: ((Date.now() - started) / 1000).toFixed(2) };
@@ -375,10 +381,15 @@ export async function executeQQFeature(tools, name, args) {
         tools.mediaLog?.(`媒体生成 · 语音 · 完成 · ${generated.elapsed} 秒 · ${generated.mime} · ${audio.length} 字节`);
         data = { type: 'record', data: { file: 'base64://' + audio.toString('base64') } };
       }
-      const receipt = await sendQQMedia(tools, args, data, isCurrent);
-      if (name === 'qq_send_voice') {
-        tools.mediaLog?.(`媒体生成 · 语音 · QQ 已确认发送 · 消息 ID ${receipt.message_id}`);
+      if (isVoice) tools.mediaLog?.('媒体生成 · 语音 · 向 QQ 提交原生语音');
+      let receipt;
+      try {
+        receipt = await sendQQMedia(tools, args, data, isCurrent);
+      } catch (error) {
+        if (isVoice) tools.mediaLog?.('媒体生成 · 语音 · QQ 未确认发送 · ' + mediaLogText(tools, error.message));
+        throw error;
       }
+      if (isVoice) tools.mediaLog?.(`媒体生成 · 语音 · QQ 已确认发送 · 消息 ID ${receipt.message_id}`);
       if (name === 'qq_send_image') tools.media.markSent(args.imageId);
       tools.store.appendHistory(`qq:${args.kind === 'group' ? 'group' : 'user'}:${args.target}`, 'assistant', summary, tools.config.agent.historyMessages);
       return name === 'qq_send_image' ? imageSendResult(sentImageId,receipt) : receipt;
