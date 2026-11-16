@@ -132,6 +132,7 @@ export async function startManager({dataRoot=process.env.DAFEIYU_DATA_ROOT||path
    }
    if(pathname==='/account/balance'&&req.method==='POST'){rate(`balance:${user.username}`,6,60000);return json(res,200,await tenants.exclusive(user.username,()=>tenants.balance(user.username)));}
    if(pathname==='/account/qq/start'&&req.method==='POST'){rate(`provision:${user.username}`,3,60000);return json(res,200,await tenants.provision(user.username));}
+   if(pathname==='/account/qq/restart'&&req.method==='POST'){rate('qq-restart:'+user.username,3,60000);const result=await tenants.restartQQ(user.username);groupCache.delete(user.username);return json(res,200,result);}
    if(pathname==='/account/qq/status'&&req.method==='GET')return json(res,200,await tenants.qqStatus(user.username));
    if(pathname==='/account/qq/qr'&&req.method==='POST'){rate(`qr:${user.username}`,10,60000);return json(res,200,await tenants.qr(user.username,(await bodyOf(req)).refresh===true));}
    if(pathname==='/account/control'&&req.method==='POST')return json(res,200,await tenants.control(user.username,(await bodyOf(req)).action));

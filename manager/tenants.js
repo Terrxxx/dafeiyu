@@ -59,6 +59,14 @@ export class Tenants {
   return post(route,body,entry.credential);
  }
  async provision(name){this.writeQQ(name);this.loginKeys.delete(name);return this.runtime('provision',name);}
+ async restartQQ(name){return this.exclusive(name,async()=>{
+  if(!this.accounts.bot(name))throw Object.assign(Error('请先创建大肥鱼'),{status:400});
+  const result=await this.runtime('restart-qq',name);
+  if(!result.restarted)throw Object.assign(Error('QQ 容器尚未启动，请先点击扫码登录'),{status:409});
+  this.loginKeys.delete(name);
+  this.accounts.audit(name,'qq-restart');
+  return result;
+ });}
  async qqStatus(name){const status=await this.napcat(name,'/QQLogin/CheckLoginStatus');if(!status.isLogin)return {loggedIn:false,phase:status.loginPhase};const info=await this.napcat(name,'/QQLogin/GetQQLoginInfo');const actual=String(info.uin||info.user_id||info.account?.uin||'');const bot=this.accounts.bot(name);if(actual!==bot.qq){await this.runtime('stop-all',name);throw new Error('登录QQ与填写的QQ号不一致，已停止此实例');}return {loggedIn:true,qq:actual,nickname:String(info.nick||'')};}
  async qr(name,refresh=false){if(refresh)await this.napcat(name,'/QQLogin/RefreshQRcode');const info=await this.napcat(name,'/QQLogin/GetQQLoginQrcode');if(typeof info.qrcode!=='string'||info.qrcode.length>500000)throw new Error('二维码尚未就绪，请稍后刷新');return {image:info.qrcode.startsWith('data:image/')?info.qrcode:await QRCode.toDataURL(info.qrcode,{width:360,margin:3})};}
  async balance(name){const bot=this.accounts.bot(name);if(!bot)return null;

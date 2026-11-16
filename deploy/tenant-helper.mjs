@@ -49,6 +49,15 @@ async function execute(body){
  if(operation==='status') {const a=await inspect(agent),q=await inspect(qq);owned(a,name);owned(q,name);return {phase:a?.State.Running?'running':a?.State.ExitCode?'failed':'stopped',exitCode:a?.State.ExitCode,qqRunning:!!q?.State.Running,port:q?.NetworkSettings.Ports?.['6099/tcp']?.[0]?.HostPort};}
  if(operation==='logs'){const info=await inspect(agent);owned(info,name);return {text:info?await exec('/usr/bin/docker',['logs','--timestamps','--tail','200',agent],{timeout:10000,maxBuffer:2*1024*1024}).then(result=>result.stdout+'\n'+result.stderr).catch(()=> ''):''};}
  if(operation==='stop'){const info=await inspect(agent);owned(info,name);if(info?.State.Running)await docker(['stop','-t','90',agent]);return {phase:'stopped'};}
+ if(operation==='restart-qq'){
+   const info=await inspect(qq);
+   owned(info,name);
+   if(!info?.State.Running)return {restarted:false};
+   if(info.Config.Labels?.['dafeiyu.kind']!=='qq')throw Error('容器类型不符');
+   await qqEgress(network);
+   await docker(['restart','--time','15',qq]);
+   return {restarted:true};
+ }
  if(operation==='stop-all'){for(const c of[agent,qq]){const info=await inspect(c);owned(info,name);if(info?.State.Running)await docker(['stop','-t','90',c]);}return {phase:'stopped'};}
  if(operation==='provision'){
    const old=await inspect(qq);owned(old,name);if(old){await qqEgress(network);if(!old.State.Running){await assertCapacity();await docker(['start',qq]);}return execute({username:name,operation:'status'});}

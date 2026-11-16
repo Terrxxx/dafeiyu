@@ -388,9 +388,27 @@ function Connection({ type, bot, notify }) {
           {busy ? "正在准备…" : image ? "刷新二维码" : "扫码登录"}
         </button>
         {qq ? (
-          <button onClick={() => check().catch((e) => notify(e.message))}>
-            检查登录
-          </button>
+          <>
+            <button disabled={busy} onClick={() => check().catch((e) => notify(e.message))}>
+              检查登录
+            </button>
+            <button disabled={busy} onClick={async () => {
+              b(true);
+              p(false);
+              set("");
+              s("正在重启 QQ 容器…");
+              try {
+                await api("/account/qq/restart", {});
+                s("QQ 容器已重启，请重新获取二维码或检查登录");
+              } catch (e) {
+                s(e.message);
+              } finally {
+                b(false);
+              }
+            }}>
+              重启 QQ 容器
+            </button>
+          </>
         ) : (
           bot.biliConfigured && (
             <button
