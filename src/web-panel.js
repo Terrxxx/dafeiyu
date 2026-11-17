@@ -81,7 +81,7 @@ export async function startWebPanel({ root = ROOT, port = 3081, controller, data
       if(req.method==='GET'&&url.pathname==='/api/usage')return send(200,usageStatistics(dataRoot,JSON.parse(fs.readFileSync(configFile,'utf8'))));
       if(req.method==='GET'&&url.pathname==='/api/storage')return send(200,storageSnapshot(dataRoot,state()));
       if (req.method === 'GET' && url.pathname === '/api/config') {
-        const text = fs.readFileSync(configFile, 'utf8'); const config=JSON.parse(text.replace(/^\uFEFF/, ''));normalizeQQPolicy(config.qq);for(const key of ['readFansEnabled','readFollowingEnabled','readInboxEnabled','replyInboxEnabled'])config.bilibili[key]??=true; if(config.social)delete config.social.browserPath; return send(200, { config, revision: revision(text), limitsSuspended: controller.model?.()?.provider === 'custom' });
+        const text = fs.readFileSync(configFile, 'utf8'); const config=JSON.parse(text.replace(/^\uFEFF/, ''));normalizeQQPolicy(config.qq);for(const key of ['readFansEnabled','readFollowingEnabled','readInboxEnabled','replyInboxEnabled'])config.bilibili[key]??=true; if(config.social)delete config.social.browserPath; return send(200, { config, revision: revision(text), speechConfigured: controller.speechConfigured?.() === true, limitsSuspended: controller.model?.()?.provider === 'custom' });
       }
       if (req.method === 'GET' && url.pathname === '/api/persona') {
         const text = fs.readFileSync(personaFile, 'utf8'); return send(200, { text, revision: revision(text) });
@@ -213,6 +213,13 @@ export async function startWebPanel({ root = ROOT, port = 3081, controller, data
           if (config.social && Object.hasOwn(config.social, 'browserPath')) return send(400, { error: '浏览器由系统自动选择，不允许设置程序路径' });
           normalizeConfig(structuredClone(config));
           enforceComponentPolicy(config,dataRoot);
+          const current = JSON.parse(old.replace(/^\uFEFF/, ""));
+          if (config.qq.groupVoiceOnly && !current.qq?.groupVoiceOnly) {
+            if (!controller.speechConfigured?.()) return send(400, { error: '请先在密钥与安全配置文字转语音模型' });
+            if (config.qq.voiceEnabled === false || !componentEnabled(componentCatalog.find(item => item.id === 'voice'), config.components)) {
+              return send(400, { error: '请先开启发送语音及中文语音组件' });
+            }
+          }
           const output = JSON.stringify(config, null, 2) + '\n';
           atomicWriteFile(configFile, output);
           return send(200, { revision: revision(output), message: '配置已保存；重启大肥鱼后生效' });

@@ -54,7 +54,7 @@ import {
 } from "./shared.jsx";
 import groups from "./settings.json";
 const settingComponent = (key) => {
-  if (key === "social.voiceName" || key === "qq.voiceEnabled") return "voice";
+  if (key === "qq.groupVoiceOnly" || key === "qq.voiceEnabled") return "voice";
   if (
     key.startsWith("qq.qzone") ||
     [
@@ -890,7 +890,6 @@ function Settings({ notify }) {
   const [usage] = useData("/api/usage", 60000);
   const [components, , componentsError] = useData("/api/components");
   const [saving, setSaving] = useState(false);
-  const [voices] = useData("/api/voices");
   const [v, load, err, set] = useData("/api/config"),
     [group, choose] = useState(() =>
       new URLSearchParams(location.hash.split("?")[1] || "").get("section") ===
@@ -989,8 +988,12 @@ function Settings({ notify }) {
               const component = components?.components?.find((item) => item.id === componentId);
               const limitLocked = v.limitsSuspended && k.startsWith("limits.");
               const componentLocked = !!componentId && !component?.enabled;
-              const locked = limitLocked || componentLocked;
-              const lockHint = limitLocked ? "自定义供应商已停用此限额。" : componentLocked ? `组件「${component?.name || { voice: "中文语音", qzone: "QQ空间", bilibili: "B站工具" }[componentId]}」未开启，请先到能力组件开启。` : null;
+              const groupVoice = k === "qq.groupVoiceOnly";
+              const speechMissing = groupVoice && !v.speechConfigured;
+              const voiceTurnedOff = groupVoice && v.config.qq?.voiceEnabled === false;
+              const locked = limitLocked || ((componentLocked || speechMissing || voiceTurnedOff) && !(groupVoice && v.config.qq?.groupVoiceOnly));
+              const lockHint = speechMissing ? "请先在密钥与安全配置文字转语音模型。" :
+                voiceTurnedOff ? "请先开启允许发送语音。" : limitLocked ? "自定义供应商已停用此限额。" : componentLocked ? `组件「${component?.name || { voice: "中文语音", qzone: "QQ空间", bilibili: "B站工具" }[componentId]}」未开启，请先到能力组件开启。` : null;
               const value =
                   getPath(v.config, k) ??
                   {
@@ -1003,31 +1006,6 @@ function Settings({ notify }) {
                   putPath(c, k, value);
                   set({ ...v, config: c });
                 };
-              if (type === "voice")
-                return (
-                  <label className={locked ? "field setting-locked" : "field"} key={k}>
-                    <span>{label}</span>
-                    <select
-                      aria-label={label}
-                      value={value}
-                      disabled={locked}
-                      onChange={(e) => update(e.target.value)}
-                    >
-                      {voices?.map((v) => (
-                        <option key={v.id} value={v.id} disabled={!v.installed}>
-                          {v.name}
-                          {v.installed ? "" : "（未安装）"}
-                        </option>
-                      ))}
-                    </select>
-                    <small>{lockHint || hint}</small>
-                    <SettingCostHint
-                      usage={usage}
-                      config={v.config}
-                      setting={k}
-                    />
-                  </label>
-                );
               if (type === "checkbox")
                 return (
                   <label className={locked ? "switch-row setting-locked" : "switch-row"} key={k}>

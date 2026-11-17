@@ -208,3 +208,46 @@ test('private and group illustrations send a confirmed caption before requesting
   assert.match(logs.join('\n'), /媒体生成 · 图片 · 失败.*HTTP 503/);
   assert.match(logs.join('\n'), /QQ 配图未完成，正文已发送/);
 });
+
+test('group voice mode speaks normal replies and proactive group messages while private replies stay text', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dfy-group-voice-'));
+  const store = new Store(dir);
+  const config = {
+    mediaModels: { speech: profiles.speech },
+    qq: { enabled: true, voiceEnabled: true, adminUsers: [] },
+    agent: { historyMessages: 64, maxModelCallsPerHour: 0, maxOutgoingPerHour: 20 },
+  };
+  const sent = [], speech = [];
+  const qq = {
+    async send(kind, target, text) { sent.push({ kind, target, text }); return { message_id: sent.length }; },
+    async call(action, args) { sent.push({ action, ...args }); return { message_id: sent.length }; },
+  };
+  const tools = new SocialTools(config, store, qq, {});
+  t.after(() => { tools.components.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+  tools.mediaRequest = async (_url, options) => {
+    speech.push(JSON.parse(options.body).input);
+    return new Response(wave, { headers: { 'Content-Type': 'audio/wav' } });
+  };
+  const agent = new Agent(config, store, tools);
+  agent.taskJSON = async () => ({ engage: true, quote: true, reply: '今天好开心。' });
+  const message = { kind: 'group', id: '51', sender: '23456', target: '12345', session: 'qq:group:12345',
+    mentioned: true, text: '早上好', receivedAt: Date.now() };
+  const env = { agent, store, tools, qq, throttle: { wait: async () => {} }, log() {} };
+  await handleQQMessage(message, 'default', env);
+  assert.equal(sent[0].text, '今天好开心。');
+  config.qq.groupVoiceOnly = true;
+  await handleQQMessage({ ...message, id: '52' }, 'voice', env);
+  assert.equal(sent[1].action, 'send_group_msg');
+  assert.equal(sent[1].group_id, 12345);
+  assert.deepEqual(sent[1].message.map(segment => segment.type), ['reply', 'record']);
+  assert.equal(sent[1].message[0].data.id, '52');
+  await handleQQMessage({ ...message, id: '53', kind: 'private', target: message.sender, session: 'qq:user:23456' }, 'private', env);
+  assert.equal(sent[2].kind, 'private');
+  assert.equal(sent[2].text, '今天好开心。');
+  tools.begin('autonomous-social');
+  tools.targets.add('group:12345');
+  await tools.call('qq_send_message', { kind: 'group', target: '12345', text: '大家早上好！' });
+  assert.deepEqual(sent[3].message.map(segment => segment.type), ['record']);
+  assert.deepEqual(speech, ['今天好开心。', '大家早上好！']);
+  assert.equal(store.data.histories['qq:group:12345'].at(-1).content, '大家早上好！');
+});

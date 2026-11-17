@@ -8,7 +8,7 @@ import{atomicWriteFile}from'../src/atomic-file.js';
 import{publishComponentPolicy}from'../src/component-policy.js';
 import{dailyStatus}from'../src/daily-budget.js';
 import { modelSettings } from '../src/model-provider.js';
-import { publicMediaModels } from '../src/media-model-settings.js';
+import { publicMediaModels, runtimeMediaModels } from '../src/media-model-settings.js';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -49,7 +49,7 @@ export async function startManager({dataRoot=process.env.DAFEIYU_DATA_ROOT||path
  async function panelFor(name){
   if(!panels.has(name))panels.set(name,(async()=>{
    await refresh(name);logs.set(name,await tenants.logs(name));
-   const panel=await startWebPanel({root:tenants.directory(name),dataRoot:tenants.directory(name),port:0,controller:{status:()=>snapshots.get(name)||{phase:'stopped'},logs:()=>logs.get(name)||[],model:()=>modelSettings(accounts.bot(name)?.secrets),control:async action=>{const value=await tenants.control(name,action);await refresh(name);return value;}}});return panel;
+   const panel=await startWebPanel({root:tenants.directory(name),dataRoot:tenants.directory(name),port:0,controller:{status:()=>snapshots.get(name)||{phase:'stopped'},logs:()=>logs.get(name)||[],model:()=>modelSettings(accounts.bot(name)?.secrets),speechConfigured:()=>!!runtimeMediaModels(accounts.bot(name)?.secrets||{}).speech,control:async action=>{const value=await tenants.control(name,action);await refresh(name);return value;}}});return panel;
   })().catch(e=>{panels.delete(name);throw e;}));
   return panels.get(name);
  }

@@ -327,15 +327,16 @@
     "声音",
     [
       [
-        "social.voiceName",
-        "语音音色",
-        "选择本机已安装的音色",
-        "voice"
-      ],
-      [
         "qq.voiceEnabled",
         "允许发送语音",
         "关闭后保留文字与图片表达",
+        "checkbox",
+        null
+      ],
+      [
+        "qq.groupVoiceOnly",
+        "群聊用语音代替文字",
+        "开启后，QQ群聊天回复用已配置的文字转语音模型合成。",
         "checkbox",
         null
       ]

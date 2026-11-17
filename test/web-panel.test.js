@@ -18,7 +18,7 @@ test('小日程最多显示最新10条，按创建顺序倒序且保留全部历
  const raw=JSON.stringify(state);fs.writeFileSync(file,raw);const response=await(await f.get('/api/status')).json();assert.deepEqual(response.tasks.map(t=>t.id),['13','12','11','10','9','8','7','6','5','4']);assert.equal(fs.readFileSync(file,'utf8'),raw);
 });
 
-async function setup(t) {
+async function setup(t, speechConfigured = () => false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fish-web-')); fs.mkdirSync(path.join(root, 'data'));
   fs.copyFileSync(path.join(ROOT, 'config.example.json'), path.join(root, 'config.json'));
   {const cfg=JSON.parse(fs.readFileSync(path.join(root,'config.json')));cfg.life={editingEnabled:true};fs.writeFileSync(path.join(root,'config.json'),JSON.stringify(cfg));}
@@ -26,7 +26,7 @@ async function setup(t) {
   fs.writeFileSync(path.join(root, 'data/state.json'), JSON.stringify({ histories: {}, actions: {}, counters: [], meta: {}, feelings: { events: [], updatedAt: Date.now(), mood: { energy: 42, joy: 45, sadness: 10, irritation: 5, curiosity: 50 }, users: { '123': { name: '测试用户',qqNickname:'测试用户', affinity: 2, trust: 30, familiarity: 0, memories: [{ scope: 'qq:user:123', quote: '<script>不要执行</script>' }] } } } }));
   const actions = [];
   const server = await startWebPanel({ root, port: 0, controller: {
-    status: () => ({ phase: 'stopped' }), logs: () => [{ id: 1, text: '验证日志' }], control: async action => { actions.push(action); return { phase: 'starting' }; },
+    speechConfigured, status: () => ({ phase: 'stopped' }), logs: () => [{ id: 1, text: '验证日志' }], control: async action => { actions.push(action); return { phase: 'starting' }; },
   } });
   t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); fs.rmSync(root, { recursive: true, force: true }); });
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -198,3 +198,21 @@ test('情绪健康默认只读，未开启设置时接口也拒绝编辑',async 
 test('伪造合法分数或顶层关系字段也不能修改，拒绝后记忆和关系均不变',async t=>{const f=await setup(t),before=await(await f.get('/api/memories/123')).json();for(const fields of [{scores:{affinity:20,trust:80,familiarity:60}},{scores:{}},{affinity:20},{trust:80},{familiarity:60},{emotions:{affection:80}}]){const response=await f.post('/api/memories/123',{action:'save',scope:'qq:user:123',text:'不能通过伪造写入',revision:before.checklist.revision,...fields});assert.equal(response.status,400);}const after=await(await f.get('/api/memories/123')).json();for(const key of ['affinity','trust','familiarity'])assert.equal(after[key],before[key]);assert.deepEqual(after.checklist,before.checklist);});
 
 test('情绪健康开关立即控制API写入，关闭后不改变已保存值',async t=>{const f=await setup(t),file=path.join(f.root,'config.json'),config=JSON.parse(fs.readFileSync(file));config.life={editingEnabled:false};fs.writeFileSync(file,JSON.stringify(config));let state=await(await f.get('/api/status')).json();assert.equal((await f.post('/api/life',{revision:state.life.revision,mood:{joy:60}})).status,403);config.life.editingEnabled=true;fs.writeFileSync(file,JSON.stringify(config));state=await(await f.get('/api/status')).json();assert.equal(state.life.editable,true);assert.equal((await f.post('/api/life',{revision:state.life.revision,mood:{joy:60}})).status,200);const control=path.join(f.root,'data/life-controls.json'),before=fs.readFileSync(control,'utf8');config.life.editingEnabled=false;fs.writeFileSync(file,JSON.stringify(config));state=await(await f.get('/api/status')).json();assert.equal(state.life.editable,false);assert.equal((await f.post('/api/life',{revision:state.life.revision,mood:{joy:90}})).status,403);assert.equal(fs.readFileSync(control,'utf8'),before);});
+
+test('群聊语音默认关闭，只有配置 TTS 并允许语音后才可开启', async t => {
+  let ready = false;
+  const f = await setup(t, () => ready);
+  const old = await (await f.get('/api/config')).json();
+  assert.equal(old.config.qq.groupVoiceOnly, false);
+  assert.equal(old.speechConfigured, false);
+  const config = structuredClone(old.config);
+  config.qq.groupVoiceOnly = true;
+  config.qq.voiceEnabled = true;
+  assert.equal((await f.post('/api/config', { config, revision: old.revision })).status, 400);
+  ready = true;
+  config.qq.voiceEnabled = false;
+  assert.equal((await f.post('/api/config', { config, revision: old.revision })).status, 400);
+  config.qq.voiceEnabled = true;
+  assert.equal((await f.post('/api/config', { config, revision: old.revision })).status, 200);
+  assert.equal((await (await f.get('/api/config')).json()).config.qq.groupVoiceOnly, true);
+});

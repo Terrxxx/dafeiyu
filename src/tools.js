@@ -16,7 +16,7 @@ import { LocalWeather } from './weather.js';
 import { MediaLibrary } from './media.js';
 import { Qzone } from './qzone.js';
 import { BrowserSearch } from './browser-search.js';
-import { qqFeatureSchemas, executeQQFeature } from './qq-features.js';
+import { qqFeatureSchemas, executeQQFeature, sendQQVoice } from './qq-features.js';
 import { recordQzoneAction } from './qq-journal.js';
 import { AvatarIdentity } from './avatar-identity.js';
 import { ComponentManager } from './component-client.js';
@@ -133,6 +133,27 @@ export class SocialTools {
     this.sleep?.assertAwake();
     if (bili) this.store.reserve('bili-comments', this.config.agent.maxBiliCommentsPerHour);
     this.store.reserve('outgoing', this.config.agent.maxOutgoingPerHour, text === null ? 1 : messageParts(text).length);
+  }
+  async sendQQChat(kind, target, text, options) {
+    const policy = this.qq.policy?.() || this.config.qq;
+    if (kind !== 'group' || !policy?.groupVoiceOnly || policy.voiceEnabled === false ||
+        !this.config.mediaModels?.speech || !this.components.allowed('qq_send_voice')) {
+      this.outgoing(false, text);
+      return this.qq.send(kind, target, text, options);
+    }
+    const parts = messageParts(text, 100).flatMap(part => part.length <= 200 ? [part] : part.match(/.{1,100}/gsu));
+    this.sleep?.assertAwake();
+    this.store.reserve('outgoing', this.config.agent.maxOutgoingPerHour, parts.length);
+    const isCurrent = this.current?.kind === kind && String(this.current.target) === String(target);
+    const messages = [];
+    for (const part of parts) {
+      const first = messages.length === 0;
+      messages.push(await sendQQVoice(this, {
+        kind, target, text: part, quote: first && options?.replyTo !== undefined,
+        atUserIds: first ? options?.atUserIds : [],
+      }, isCurrent));
+    }
+    return messages.length === 1 ? messages[0] : { messages, count: messages.length };
   }
   async call(name, args) {
     if (name === 'qq_generate_media' && this.current) args = { ...args, kind: this.current.kind, target: this.current.target };
@@ -407,8 +428,7 @@ export class SocialTools {
       this.currentAttempted = true;
       const msg = this.current;
       return this.store.once(msg.key, async () => {
-        this.outgoing(false, args.text);
-        const receipt = await this.qq.send(msg.kind, msg.target, args.text, {
+        const receipt = await this.sendQQChat(msg.kind, msg.target, args.text, {
           atUserIds: args.mentionSender && msg.kind === 'group' ? [msg.sender] : [],
           ...(args.quote ? { replyTo: msg.id } : {}),
         });
@@ -461,8 +481,7 @@ export class SocialTools {
       const videos = [...new Set(args.text.match(/BV[0-9A-Za-z]{10}/g) || [])].sort();
       const hash = createHash('sha256').update(videos.length ? videos.join(',') : args.text.trim()).digest('hex').slice(0, 20);
       return this.store.once(`qq-share:${args.kind}:${args.target}:${hash}`, async () => {
-        this.outgoing(false, args.text);
-        const receipt = await this.qq.send(args.kind, args.target, args.text, { atUserIds });
+        const receipt = await this.sendQQChat(args.kind, args.target, args.text, { atUserIds });
         if(!confirmedMessage(receipt))throw new Error('QQ未返回完整消息ID，跨会话发送状态不明');
         (this.crossSendConfirmed||=[]).push({kind:args.kind,target:String(args.target)});
         const session = `qq:${args.kind === 'group' ? 'group' : 'user'}:${args.target}`;

@@ -1,5 +1,6 @@
 export function normalizeQQPolicy(qq){
  for(const key of ['profileReadEnabled','qzoneReadEnabled','groupTalkEnabled','privateEnabled','qzoneLikeEnabled','qzoneCommentEnabled','qzoneReplyEnabled','voiceEnabled']){qq[key]??=true;if(typeof qq[key]!=='boolean')throw Error(key+'须为开关');}
+ qq.groupVoiceOnly??=false;if(typeof qq.groupVoiceOnly!=='boolean')throw Error('群聊语音代替文字须为开关');
  qq.adminOnlyDialogue??=false;if(typeof qq.adminOnlyDialogue!=='boolean')throw Error('仅管理员对话须为开关');
  qq.friendRequestsEnabled??=false;if(typeof qq.friendRequestsEnabled!=='boolean')throw Error('好友申请开关无效');
  for(const key of ['groupAllowlist','groupBlocklist','privateAllowlist','privateBlocklist']){qq[key]??=[];if(!Array.isArray(qq[key])||qq[key].length>500||qq[key].some(id=>typeof id!=='string'||! /^[1-9]\d*$/.test(id)))throw Error(key+'须为QQ号码列表');}

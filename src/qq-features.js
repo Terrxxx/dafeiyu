@@ -46,6 +46,7 @@ const generationNames = { image: '图片', speech: '语音', music: '音乐', ef
 async function sendQQMedia(tools, args, data, isCurrent) {
   const group = args.kind === 'group';
   const message = [...(isCurrent && args.quote ? [{ type: 'reply', data: { id: tools.current.id } }] : []),
+    ...(group ? (args.atUserIds || []).map(id => ({ type: 'at', data: { qq: String(id) } })) : []),
     ...(Array.isArray(data) ? data : [data])];
   const receipt = await tools.qq.call(group ? 'send_group_msg' : 'send_private_msg', {
     [group ? 'group_id' : 'user_id']: Number(args.target), message,
@@ -107,6 +108,38 @@ async function requestGeneratedMedia(tools, kind, text, args, illustration = fal
     tools.mediaLog?.(`媒体生成 · ${name} · 失败 · ${((Date.now() - started) / 1000).toFixed(2)} 秒 · ${mediaLogText(tools, error.message)}`);
     throw error;
   }
+}
+
+export async function sendQQVoice(tools, args, isCurrent) {
+  let generated;
+  if (tools.config.mediaModels?.speech) {
+    generated = await requestGeneratedMedia(tools, 'speech', args.text, args);
+  } else {
+    const started = Date.now();
+    const voice = tools.config.social?.voiceName;
+    tools.mediaLog?.(`媒体生成 · 语音 · 开始本地合成 · 音色 ${mediaLogText(tools, voice || '默认')}`);
+    tools.mediaLog?.(`媒体生成 · 语音 · 合成文本：${mediaLogText(tools, args.text)}`);
+    try {
+      const bytes = await (tools.synthesizeSpeech || synthesizeSpeech)(args.text, tools.media.directory, voice);
+      generated = { bytes, mime: 'audio/wav', elapsed: ((Date.now() - started) / 1000).toFixed(2) };
+    } catch (error) {
+      tools.mediaLog?.(`媒体生成 · 语音 · 失败 · ${((Date.now() - started) / 1000).toFixed(2)} 秒 · ${mediaLogText(tools, error.message)}`);
+      throw error;
+    }
+  }
+  const audio = generated.bytes;
+  tools.mediaLog?.(`媒体生成 · 语音 · 完成 · ${generated.elapsed} 秒 · ${generated.mime} · ${audio.length} 字节`);
+  const data = { type: 'record', data: { file: 'base64://' + audio.toString('base64') } };
+  tools.mediaLog?.('媒体生成 · 语音 · 向 QQ 提交原生语音');
+  let receipt;
+  try {
+    receipt = await sendQQMedia(tools, args, data, isCurrent);
+  } catch (error) {
+    tools.mediaLog?.('媒体生成 · 语音 · QQ 未确认发送 · ' + mediaLogText(tools, error.message));
+    throw error;
+  }
+  tools.mediaLog?.(`媒体生成 · 语音 · QQ 已确认发送 · 消息 ID ${receipt.message_id}`);
+  return receipt;
 }
 
 async function generateForCurrent(tools, args, illustration = false) {
@@ -360,36 +393,7 @@ export async function executeQQFeature(tools, name, args) {
     const key = isCurrent ? (name === 'qq_send_image' ? `${tools.current.key}:image:${args.imageId}` : tools.current.key) : `qq-media:${args.kind}:${args.target}:${digest(summary)}:${Math.floor(Date.now() / 3600000)}`;
     return tools.store.once(key, async () => {
       tools.outgoing();
-      if (isVoice) {
-        let generated;
-        if (tools.config.mediaModels?.speech) {
-          generated = await requestGeneratedMedia(tools, 'speech', args.text, args);
-        } else {
-          const started = Date.now();
-          const voice = tools.config.social?.voiceName;
-          tools.mediaLog?.(`媒体生成 · 语音 · 开始本地合成 · 音色 ${mediaLogText(tools, voice || '默认')}`);
-          tools.mediaLog?.(`媒体生成 · 语音 · 合成文本：${mediaLogText(tools, args.text)}`);
-          try {
-            const bytes = await (tools.synthesizeSpeech || synthesizeSpeech)(args.text, tools.media.directory, voice);
-            generated = { bytes, mime: 'audio/wav', elapsed: ((Date.now() - started) / 1000).toFixed(2) };
-          } catch (error) {
-            tools.mediaLog?.(`媒体生成 · 语音 · 失败 · ${((Date.now() - started) / 1000).toFixed(2)} 秒 · ${mediaLogText(tools, error.message)}`);
-            throw error;
-          }
-        }
-        const audio = generated.bytes;
-        tools.mediaLog?.(`媒体生成 · 语音 · 完成 · ${generated.elapsed} 秒 · ${generated.mime} · ${audio.length} 字节`);
-        data = { type: 'record', data: { file: 'base64://' + audio.toString('base64') } };
-      }
-      if (isVoice) tools.mediaLog?.('媒体生成 · 语音 · 向 QQ 提交原生语音');
-      let receipt;
-      try {
-        receipt = await sendQQMedia(tools, args, data, isCurrent);
-      } catch (error) {
-        if (isVoice) tools.mediaLog?.('媒体生成 · 语音 · QQ 未确认发送 · ' + mediaLogText(tools, error.message));
-        throw error;
-      }
-      if (isVoice) tools.mediaLog?.(`媒体生成 · 语音 · QQ 已确认发送 · 消息 ID ${receipt.message_id}`);
+      const receipt = isVoice ? await sendQQVoice(tools, args, isCurrent) : await sendQQMedia(tools, args, data, isCurrent);
       if (name === 'qq_send_image') tools.media.markSent(args.imageId);
       tools.store.appendHistory(`qq:${args.kind === 'group' ? 'group' : 'user'}:${args.target}`, 'assistant', summary, tools.config.agent.historyMessages);
       return name === 'qq_send_image' ? imageSendResult(sentImageId,receipt) : receipt;

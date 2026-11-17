@@ -6,7 +6,8 @@
     "mergeSeconds": 8,
     "maxWaitSeconds": 25,
     "adminUsers": [],
-    "voiceEnabled": false
+    "voiceEnabled": false,
+    "groupVoiceOnly": false
   },
   "bilibili": {
     "enabled": true,
