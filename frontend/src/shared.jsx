@@ -110,7 +110,9 @@ export async function api(url, body) {
     if (!response.ok) throw Error(value.error);
     panelTokens.set(key, value.token);
   }
+  const instanceStatus = url === "/account/status" && body === undefined;
   const response = await fetch(path, {
+    ...(instanceStatus ? { signal: AbortSignal.timeout(10000) } : {}),
     method: body === undefined ? "GET" : "POST",
     headers: {
       ...(body !== undefined
@@ -140,7 +142,7 @@ export function useData(url, interval = 0) {
       set(await api(url));
       err("");
     } catch (e) {
-      err(e.message);
+      err(e.name === "TimeoutError" && url === "/account/status" ? "读取实例超时，请重试。" : e.message);
     }
   }, [url, cacheKey]);
   useEffect(() => {

@@ -43,7 +43,12 @@ import {
 } from "./shared.jsx";
 function Account({ me, tab, notify }) {
   const [d, load, error] = useData("/account/status");
-  if (error) return <ErrorBox>{error}</ErrorBox>;
+  if (error) return (
+    <>
+      <ErrorBox>{error}</ErrorBox>
+      <button onClick={() => void load()}>重新读取实例</button>
+    </>
+  );
   if (!d) return <Empty>正在读取实例…</Empty>;
   const b = d.bot;
   const command = async (action) => {
