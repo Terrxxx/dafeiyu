@@ -96,7 +96,7 @@ async function requestGeneratedMedia(tools, kind, text, args, illustration = fal
   const voice = isSpeech && profile.voice ? ' · 音色 ' + mediaLogText(tools, profile.voice) : '';
   tools.mediaLog?.(`媒体生成 · ${name} · 发出请求 · 模型 ${mediaLogText(tools, profile.model)}${voice}`);
   tools.mediaLog?.(`媒体生成 · ${name} · ${isSpeech ? '合成文本' : '提示词'}：${mediaLogText(tools, String(text).trim()).slice(0, 1000)}`);
-  if (isSpeech && profile.protocol === 'openai' && profile.instructions) {
+  if (isSpeech && profile.protocol !== 'elevenlabs' && profile.instructions) {
     tools.mediaLog?.('媒体生成 · 语音 · 风格提示词：' + mediaLogText(tools, profile.instructions).slice(0, 1000));
   }
   try {

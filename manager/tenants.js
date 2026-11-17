@@ -142,7 +142,7 @@ export class Tenants {
    const bot = this.accounts.bot(name);
    if (!bot) throw Object.assign(Error('请先创建大肥鱼'), { status: 400 });
    const previous = bot.secrets.mediaModels || {};
-   const saved = normalizeMediaModel(kind, configuration, previous[kind]);
+   const saved = normalizeMediaModel(kind, configuration, previous[kind], modelSettings(bot.secrets).baseUrl);
    const secrets = { ...bot.secrets, mediaModels: { ...previous, [kind]: saved } };
    this.accounts.transaction(() => {
     this.accounts.saveSecrets(name, secrets);
