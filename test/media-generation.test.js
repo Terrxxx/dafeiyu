@@ -209,7 +209,7 @@ test('private and group illustrations send a confirmed caption before requesting
   assert.match(logs.join('\n'), /QQ 配图未完成，正文已发送/);
 });
 
-test('group voice mode speaks normal replies and proactive group messages while private replies stay text', async t => {
+test('group and private voice modes apply independently to QQ chat', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dfy-group-voice-'));
   const store = new Store(dir);
   const config = {
@@ -250,4 +250,15 @@ test('group voice mode speaks normal replies and proactive group messages while 
   assert.deepEqual(sent[3].message.map(segment => segment.type), ['record']);
   assert.deepEqual(speech, ['今天好开心。', '大家早上好！']);
   assert.equal(store.data.histories['qq:group:12345'].at(-1).content, '大家早上好！');
+  config.qq.groupVoiceOnly = false;
+  config.qq.privateVoiceOnly = true;
+  await handleQQMessage({ ...message, id: '54', kind: 'private', target: message.sender, session: 'qq:user:23456' }, 'private-voice', env);
+  assert.equal(sent[4].action, 'send_private_msg');
+  assert.equal(sent[4].user_id, 23456);
+  assert.deepEqual(sent[4].message.map(segment => segment.type), ['reply', 'record']);
+  assert.equal(speech.at(-1), '今天好开心。');
+  assert.equal(store.data.histories['qq:user:23456'].at(-1).content, '今天好开心。');
+  await handleQQMessage({ ...message, id: '55' }, 'group-restored', env);
+  assert.equal(sent[5].kind, 'group');
+  assert.equal(sent[5].text, '今天好开心。');
 });

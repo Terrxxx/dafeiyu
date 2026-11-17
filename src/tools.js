@@ -136,7 +136,8 @@ export class SocialTools {
   }
   async sendQQChat(kind, target, text, options) {
     const policy = this.qq.policy?.() || this.config.qq;
-    if (kind !== 'group' || !policy?.groupVoiceOnly || policy.voiceEnabled === false ||
+    const voiceOnly = kind === 'group' ? policy?.groupVoiceOnly : kind === 'private' && policy?.privateVoiceOnly;
+    if (!voiceOnly || policy.voiceEnabled === false ||
         !this.config.mediaModels?.speech || !this.components.allowed('qq_send_voice')) {
       this.outgoing(false, text);
       return this.qq.send(kind, target, text, options);

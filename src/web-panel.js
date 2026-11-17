@@ -214,7 +214,8 @@ export async function startWebPanel({ root = ROOT, port = 3081, controller, data
           normalizeConfig(structuredClone(config));
           enforceComponentPolicy(config,dataRoot);
           const current = JSON.parse(old.replace(/^\uFEFF/, ""));
-          if (config.qq.groupVoiceOnly && !current.qq?.groupVoiceOnly) {
+          const enablesVoiceMode = ['groupVoiceOnly', 'privateVoiceOnly'].some(key => config.qq[key] && !current.qq?.[key]);
+          if (enablesVoiceMode) {
             if (!controller.speechConfigured?.()) return send(400, { error: '请先在密钥与安全配置文字转语音模型' });
             if (config.qq.voiceEnabled === false || !componentEnabled(componentCatalog.find(item => item.id === 'voice'), config.components)) {
               return send(400, { error: '请先开启发送语音及中文语音组件' });

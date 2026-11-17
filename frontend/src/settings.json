@@ -339,6 +339,13 @@
         "开启后，QQ群聊天回复用已配置的文字转语音模型合成。",
         "checkbox",
         null
+      ],
+      [
+        "qq.privateVoiceOnly",
+        "私聊用语音代替文字",
+        "开启后，QQ 私聊回复用已配置的文字转语音模型合成。",
+        "checkbox",
+        null
       ]
     ]
   ],

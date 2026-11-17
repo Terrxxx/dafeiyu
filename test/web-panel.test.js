@@ -199,11 +199,12 @@ test('伪造合法分数或顶层关系字段也不能修改，拒绝后记忆�
 
 test('情绪健康开关立即控制API写入，关闭后不改变已保存值',async t=>{const f=await setup(t),file=path.join(f.root,'config.json'),config=JSON.parse(fs.readFileSync(file));config.life={editingEnabled:false};fs.writeFileSync(file,JSON.stringify(config));let state=await(await f.get('/api/status')).json();assert.equal((await f.post('/api/life',{revision:state.life.revision,mood:{joy:60}})).status,403);config.life.editingEnabled=true;fs.writeFileSync(file,JSON.stringify(config));state=await(await f.get('/api/status')).json();assert.equal(state.life.editable,true);assert.equal((await f.post('/api/life',{revision:state.life.revision,mood:{joy:60}})).status,200);const control=path.join(f.root,'data/life-controls.json'),before=fs.readFileSync(control,'utf8');config.life.editingEnabled=false;fs.writeFileSync(file,JSON.stringify(config));state=await(await f.get('/api/status')).json();assert.equal(state.life.editable,false);assert.equal((await f.post('/api/life',{revision:state.life.revision,mood:{joy:90}})).status,403);assert.equal(fs.readFileSync(control,'utf8'),before);});
 
-test('群聊语音默认关闭，只有配置 TTS 并允许语音后才可开启', async t => {
+test('群聊和私聊语音默认关闭，只有配置 TTS 并允许语音后才可开启', async t => {
   let ready = false;
   const f = await setup(t, () => ready);
   const old = await (await f.get('/api/config')).json();
   assert.equal(old.config.qq.groupVoiceOnly, false);
+  assert.equal(old.config.qq.privateVoiceOnly, false);
   assert.equal(old.speechConfigured, false);
   const config = structuredClone(old.config);
   config.qq.groupVoiceOnly = true;
@@ -214,5 +215,12 @@ test('群聊语音默认关闭，只有配置 TTS 并允许语音后才可开启
   assert.equal((await f.post('/api/config', { config, revision: old.revision })).status, 400);
   config.qq.voiceEnabled = true;
   assert.equal((await f.post('/api/config', { config, revision: old.revision })).status, 200);
-  assert.equal((await (await f.get('/api/config')).json()).config.qq.groupVoiceOnly, true);
+  const enabled = await (await f.get('/api/config')).json();
+  assert.equal(enabled.config.qq.groupVoiceOnly, true);
+  ready = false;
+  enabled.config.qq.privateVoiceOnly = true;
+  assert.equal((await f.post('/api/config', enabled)).status, 400);
+  ready = true;
+  assert.equal((await f.post('/api/config', enabled)).status, 200);
+  assert.equal((await (await f.get('/api/config')).json()).config.qq.privateVoiceOnly, true);
 });

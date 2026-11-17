@@ -53,8 +53,9 @@ import {
   markClean,
 } from "./shared.jsx";
 import groups from "./settings.json";
+const voiceModeSettings = new Set(["qq.groupVoiceOnly", "qq.privateVoiceOnly"]);
 const settingComponent = (key) => {
-  if (key === "qq.groupVoiceOnly" || key === "qq.voiceEnabled") return "voice";
+  if (voiceModeSettings.has(key) || key === "qq.voiceEnabled") return "voice";
   if (
     key.startsWith("qq.qzone") ||
     [
@@ -988,10 +989,10 @@ function Settings({ notify }) {
               const component = components?.components?.find((item) => item.id === componentId);
               const limitLocked = v.limitsSuspended && k.startsWith("limits.");
               const componentLocked = !!componentId && !component?.enabled;
-              const groupVoice = k === "qq.groupVoiceOnly";
-              const speechMissing = groupVoice && !v.speechConfigured;
-              const voiceTurnedOff = groupVoice && v.config.qq?.voiceEnabled === false;
-              const locked = limitLocked || ((componentLocked || speechMissing || voiceTurnedOff) && !(groupVoice && v.config.qq?.groupVoiceOnly));
+              const voiceMode = voiceModeSettings.has(k);
+              const speechMissing = voiceMode && !v.speechConfigured;
+              const voiceTurnedOff = voiceMode && v.config.qq?.voiceEnabled === false;
+              const locked = limitLocked || ((componentLocked || speechMissing || voiceTurnedOff) && !(voiceMode && getPath(v.config, k)));
               const lockHint = speechMissing ? "请先在密钥与安全配置文字转语音模型。" :
                 voiceTurnedOff ? "请先开启允许发送语音。" : limitLocked ? "自定义供应商已停用此限额。" : componentLocked ? `组件「${component?.name || { voice: "中文语音", qzone: "QQ空间", bilibili: "B站工具" }[componentId]}」未开启，请先到能力组件开启。` : null;
               const value =

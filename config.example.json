@@ -7,7 +7,8 @@
     "maxWaitSeconds": 25,
     "adminUsers": [],
     "voiceEnabled": false,
-    "groupVoiceOnly": false
+    "groupVoiceOnly": false,
+    "privateVoiceOnly": false
   },
   "bilibili": {
     "enabled": true,
