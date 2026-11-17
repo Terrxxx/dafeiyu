@@ -122,7 +122,16 @@ export class Tenants {
    return balance;
   });
  }
- async control(name,action){return this.exclusive(name,async()=>{
+ async control(name,action){return this.exclusive(name,()=>this.controlLocked(name,action));}
+ async restartRunning(name){return this.exclusive(name,async()=>{
+  const user=this.accounts.user(name),bot=this.accounts.bot(name);
+  if(!user||user.disabled||!user.email||!bot?.desired)return 'skipped';
+  const status=await this.runtime('status',name);
+  if(status.phase!=='running')return 'skipped';
+  await this.controlLocked(name,'restart');
+  return 'restarted';
+ });}
+ async controlLocked(name,action){
   const bot=this.accounts.bot(name);if(!bot)throw new Error('请先创建大肥鱼');
   if(action==='stop'){this.accounts.db.prepare('UPDATE bots SET desired=0 WHERE username=?').run(name);this.accounts.audit(name,'bot-stop');return this.runtime('stop',name);}
   if(!['start','restart'].includes(action))throw new Error('无效操作');
@@ -136,7 +145,7 @@ export class Tenants {
   const mediaModels = runtimeMediaModels(secrets);
   if (Object.keys(mediaModels).length) env.DAFEIYU_MEDIA_MODELS = JSON.stringify(mediaModels);
   const result=await this.runtime('start',name,{env});this.accounts.db.prepare('UPDATE bots SET desired=1 WHERE username=?').run(name);this.accounts.audit(name,`bot-${action}`);return result;
- });}
+ }
  async saveMediaModel(name, { kind, ...configuration }) {
   return this.exclusive(name, async () => {
    const bot = this.accounts.bot(name);

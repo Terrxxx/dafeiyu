@@ -18,6 +18,11 @@ function queueProvision(body){const next=provisioning.catch(()=>{}).then(()=>exe
 async function assertCapacity(){const rows=await docker(['ps','--filter','label=dafeiyu.kind=qq','--format','{{.Names}}']);if(rows.split('\n').filter(Boolean).length>=4)throw Error('CAPACITY');}
 async function execute(body){
  const {username:name,operation}=body;
+ if(operation==='restart-site'){
+   if(!/^[a-z][a-z0-9_]{2,23}$/.test(name))throw Error('非法管理员用户名');
+   await exec('/usr/bin/systemd-run',['--quiet','--collect','--unit=dafeiyu-manager-restart','--on-active=2s','/usr/bin/systemctl','restart','dafeiyu-manager.service'],{timeout:10000});
+   return {scheduled:true};
+ }
  if(operation==='prepare') {if(!/^[a-z][a-z0-9_]{2,23}$/.test(name))throw Error('非法用户名');const target=path.join(BASE,name);if(!fs.existsSync(target))fs.mkdirSync(target,{mode:0o770});if(fs.realpathSync(target)!==target)throw Error('禁止符号链接目录');fs.chownSync(target,0,978);fs.chmodSync(target,0o770);return {prepared:true};}
  if(operation==='delete-tenant'){
    if(!/^[a-z][a-z0-9_]{2,23}$/.test(name))throw Error('非法用户名');

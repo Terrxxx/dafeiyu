@@ -30,6 +30,16 @@ export async function startManager({dataRoot=process.env.DAFEIYU_DATA_ROOT||path
  const syncPolicy=()=>publishComponentPolicy(dataRoot,getPolicy(),accounts.db.prepare('SELECT username FROM bots').all().map(x=>x.username));
  const panels=new Map(),snapshots=new Map(),logs=new Map(),rates=new Map();let ticking=false,closing=false;
  const allowedOrigins=new Set(origins);let actualPort;
+ const siteStartedAt=Date.now();let siteRestartUntil=0,restartJob=null;
+ async function restartInstances(job,actor){
+  for(const row of job.instances){
+   row.state='restarting';
+   try{row.state=await tenants.restartRunning(row.username);}
+   catch(e){row.state='failed';row.error=cleanError(e);}
+   accounts.audit(actor,'admin-instance-restart-'+row.state,row.username);
+  }
+  job.finishedAt=Date.now();
+ }
  const error=(status,message)=>Object.assign(new Error(message),{status});
  const rate=(key,limit=15,ms=600000)=>{const now=Date.now(),old=rates.get(key);if(!old||old.until<now){rates.set(key,{until:now+ms,count:1});return;}if(++old.count>limit)throw error(429,'操作过于频繁，请稍后再试');};
  const csrf=(req,user)=>{if(req.headers['x-csrf-token']!==user.csrf)throw error(403,'页面会话已更新，请刷新后重试');};
@@ -181,7 +191,34 @@ export async function startManager({dataRoot=process.env.DAFEIYU_DATA_ROOT||path
     if(pathname==='/admin/settings'&&req.method==='GET')return json(res,200,site.safe());
     if(pathname==='/admin/components'&&req.method==='GET')return json(res,200,{...getPolicy(),components:componentCatalog.map(c=>({id:c.id,name:c.name,description:c.description,unavailable:!!c.unavailable,enabled:!c.unavailable&&!getPolicy().disabled.includes(c.id)}))});
     if(pathname==='/admin/overview'&&req.method==='GET')return json(res,200,{users:accounts.db.prepare('SELECT users.username,users.role,users.disabled,users.created,users.email,users.email_verified,users.email_pending,bots.qq,bots.desired,bots.billing FROM users LEFT JOIN bots USING(username) ORDER BY users.created').all(),invites:accounts.db.prepare('SELECT id,created_by,expires,max_uses,uses,revoked FROM invites ORDER BY expires DESC LIMIT 100').all(),audit:accounts.db.prepare('SELECT * FROM audit ORDER BY id DESC LIMIT 100').all()});
+    if(pathname==='/admin/restart'&&req.method==='GET')return json(res,200,{siteStartedAt,siteRestartPending:siteRestartUntil>Date.now(),job:restartJob});
     const body=req.method==='POST'?await bodyOf(req):{};
+    if(pathname==='/admin/restart'&&req.method==='POST'){
+     rate('admin-restart:'+user.username,6,60000);
+     if(siteRestartUntil>Date.now()||(restartJob&&!restartJob.finishedAt))throw error(409,'已有重启操作正在进行');
+     if(body.scope==='site'){
+      siteRestartUntil=Date.now()+60000;
+      try{await tenants.runtime('restart-site',user.username);}
+      catch(e){siteRestartUntil=0;throw e;}
+      accounts.audit(user.username,'admin-site-restart');
+      return json(res,202,{siteStartedAt,scheduled:true});
+     }
+     if(body.scope!=='all'&&body.scope!=='user')throw error(400,'重启范围无效');
+     let targets=accounts.db.prepare('SELECT username FROM bots ORDER BY username').all();
+     if(body.scope==='user'){
+      targets=targets.filter(row=>row.username===body.username);
+      if(!targets.length)throw error(404,'此用户尚未创建大肥鱼');
+     }
+     restartJob={startedAt:Date.now(),finishedAt:null,instances:targets.map(({username})=>({username,state:'queued'}))};
+     accounts.audit(user.username,'admin-instance-restart-request',body.scope==='all'?'all':body.username);
+     const job=restartJob;
+     void restartInstances(job,user.username).catch(()=>{
+      for(const row of job.instances)if(row.state==='queued'||row.state==='restarting'){row.state='failed';row.error='重启任务中断';}
+      job.finishedAt=Date.now();
+      console.error('Admin instance restart interrupted');
+     });
+     return json(res,202,{job:restartJob});
+    }
     if(pathname==='/admin/settings'&&req.method==='POST'){const current=site.read();if(!user.email&&(body.registrationMode!==current.registrationMode||body.emailActivation!==current.emailActivation||JSON.stringify(body.captcha??current.captcha)!==JSON.stringify(current.captcha)))throw error(403,'绑定邮箱前仅允许配置发信，不能修改注册或验证码规则');return json(res,200,site.save(body,user.username));}
     if(pathname==='/admin/settings/mail-preview'&&req.method==='POST'){rate('mail-preview:'+user.username,60,60000);return json(res,200,site.preview(body.template,body.kind));}
     if(pathname==='/admin/settings/test-email'&&req.method==='POST'){rate('smtp-test:'+user.username,6,3600000);await site.testMessage(body.email,body.kind);accounts.audit(user.username,'smtp-test');return json(res,200,{ok:true,message:'测试邮件已提交，请检查收件箱与垃圾邮件'});}

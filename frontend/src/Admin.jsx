@@ -68,6 +68,68 @@ function AdminTabs() {
     </nav>
   );
 }
+const restartLabels = { queued: "等待重启", restarting: "正在重启", restarted: "已重启", skipped: "已跳过", failed: "重启失败" };
+
+function RestartControls({ users, notify }) {
+  const [state, , error, setState] = useData("/admin/restart", 3000);
+  const [username, select] = useState("");
+  const [working, setWorking] = useState(false);
+  const [restartFrom, setRestartFrom] = useState(null);
+  const job = state?.job;
+  const disabled = working || !state || state.siteRestartPending || !!(job && !job.finishedAt) || restartFrom !== null;
+  useEffect(() => {
+    if (restartFrom !== null && state?.siteStartedAt && state.siteStartedAt !== restartFrom) {
+      setRestartFrom(null);
+      notify("站点管理服务已恢复");
+    }
+  }, [restartFrom, state?.siteStartedAt, notify]);
+  useEffect(() => {
+    if (restartFrom === null) return;
+    const timeout = setTimeout(() => {
+      setRestartFrom(null);
+      notify("尚未确认站点恢复，请刷新面板检查。");
+    }, 65000);
+    return () => clearTimeout(timeout);
+  }, [restartFrom, notify]);
+  const restart = async (scope, message) => {
+    if (!confirm(message)) return;
+    setWorking(true);
+    try {
+      const result = await api("/admin/restart", { scope, ...(scope === "user" ? { username } : {}) });
+      if (scope === "site") setRestartFrom(result.siteStartedAt);
+      else setState({ ...state, job: result.job });
+    } catch (e) {
+      notify(e.message);
+    } finally {
+      setWorking(false);
+    }
+  };
+  return (
+    <Card title="服务重启" subtitle="站点操作只重启管理服务。实例操作会跳过已停止的大肥鱼。">
+      <div className="actions">
+        <button disabled={disabled} onClick={() => restart("site", "重启站点管理服务？面板会短暂断开。")}>重启站点</button>
+        <button disabled={disabled} onClick={() => restart("all", "逐个重启所有正在运行的大肥鱼？")}>重启全部实例</button>
+      </div>
+      <label className="field">
+        <span>选择实例</span>
+        <select value={username} onChange={(e) => select(e.target.value)} disabled={disabled}>
+          <option value="">请选择用户</option>
+          {users.filter((user) => user.qq && !user.disabled).map((user) => (
+            <option key={user.username} value={user.username}>{user.username}</option>
+          ))}
+        </select>
+      </label>
+      <button disabled={disabled || !username} onClick={() => restart("user", "重启 " + username + " 的大肥鱼？")}>重启选中实例</button>
+      {(restartFrom !== null || state?.siteRestartPending) && <p role="status">正在等待站点管理服务恢复…</p>}
+      {error && restartFrom === null && <ErrorBox>{error}</ErrorBox>}
+      {job && <ul aria-label="实例重启结果">
+        {job.instances.length === 0 && <li>暂无实例可重启</li>}
+        {job.instances.map((row) => <li key={row.username}>{row.username} · {restartLabels[row.state]}{row.error && " · " + row.error}</li>)}
+      </ul>}
+    </Card>
+  );
+}
+
 function Admin({ notify }) {
   const [v, load, err] = useData("/admin/overview"),
     [code, set] = useState("");
@@ -90,6 +152,7 @@ function Admin({ notify }) {
   return (
     <>
       <AdminTabs />
+      <RestartControls users={v.users} notify={notify} />
       <div className="two-col">
         <Card
           title="发放邀请码"
